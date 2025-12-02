@@ -7,7 +7,7 @@ const Login = () => {
     const { login } = useAuth();
     const navigate = useNavigate();
     const location = useLocation();
-    const [form, setForm] = useState({ name: "", email: "", password: "" });
+    const [form, setForm] = useState({ email: "", password: "" });
     const [error, setError] = useState("");
 
     const handleChange = (e) => {
@@ -28,7 +28,7 @@ const Login = () => {
                 return;
             }
 
-            setError(result.error || "Nama, email, atau password salah.");
+            setError(result.error || "Email atau password salah.");
         } catch (error) {
             setError("Terjadi kesalahan. Silakan coba lagi.");
             console.error("Login error:", error);
@@ -53,18 +53,6 @@ const Login = () => {
                             <h1 className="text-lg font-light">Login untuk lanjut.</h1>
                         </div>
                         <form className="flex flex-col gap-3" onSubmit={handleSubmit}>
-                            <div>
-                                <input
-                                    className="w-full px-4 py-2 rounded-md border border-yellow-300 bg-transparent placeholder:text-gray-200 text-sm focus:outline-none"
-                                    type="text"
-                                    id="name"
-                                    name="name"
-                                    value={form.name}
-                                    onChange={handleChange}
-                                    placeholder="Nama"
-                                    required
-                                />
-                            </div>
                             <div>
                                 <input
                                     className="w-full px-4 py-2 rounded-md border border-yellow-300 bg-transparent placeholder:text-gray-200 text-sm focus:outline-none"

@@ -381,11 +381,11 @@ const ProfileField = ({ label, value, editMode, onChange, readOnly = false }) =>
       </span>
 
       {!editMode || readOnly ? (
-        <span className="text-[#1e1e1e] text-sm sm:text-base break-all">{value}</span>
+        <span className="text-[#1e1e1e] text-sm sm:text-base break-all">{value || "-"}</span>
       ) : (
         <input
           type="text"
-          value={value}
+          value={value || ""}
           onChange={onChange}
           className="border px-3 py-1 rounded-lg w-full sm:w-64"
         />

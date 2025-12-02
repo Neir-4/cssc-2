@@ -1,12 +1,31 @@
 import { useState, useEffect } from "react";
 import { FaPlus, FaClock, FaUserTie, FaUserGraduate, FaBullhorn, FaCheckCircle, FaCalendarDay } from "react-icons/fa";
 import { useAuth } from "../context/AuthContext";
+import apiService from "../services/api.js";
 
 const Pengumuman = () => {
     const { user } = useAuth(); 
 
     const [announcements, setAnnouncements] = useState([]);
+    const [mySubscriptions, setMySubscriptions] = useState([]);
     const [showCreateForm, setShowCreateForm] = useState(false);
+    const [loading, setLoading] = useState(true);
+
+    // Load user subscriptions
+    useEffect(() => {
+        const loadSubscriptions = async () => {
+            try {
+                const response = await apiService.getMySubscriptions();
+                setMySubscriptions(response.subscriptions || []);
+            } catch (error) {
+                console.error('Error loading subscriptions:', error);
+            }
+        };
+
+        if (user) {
+            loadSubscriptions();
+        }
+    }, [user]);
 
     // Load Data
     useEffect(() => {
@@ -47,6 +66,28 @@ const Pengumuman = () => {
                     date: "2025-11-07",
                     time: "08:15",
                     status: "pending"
+                },
+                {
+                    id: 4,
+                    title: "Pengumpulan Tugas Struktur Data",
+                    content: "Pengumpulan tugas Struktur Data ditutup hari Jumat pukul 23:59. Silakan upload di Google Classroom. Terlambat tidak akan diterima.",
+                    author: "Anandhini",
+                    authorRole: "Dosen",
+                    subject: "Struktur Data",
+                    date: "2025-11-08",
+                    time: "14:30",
+                    status: "approved"
+                },
+                {
+                    id: 5,
+                    title: "Etika Profesi - Diskusi Kasus",
+                    content: "Minggu depan kita akan melakukan diskusi kasus tentang etika dalam pengembangan software. Silakan baca materi yang sudah di-upload.",
+                    author: "Dr. Ade Gunawan",
+                    authorRole: "Dosen",
+                    subject: "Etika Profesi",
+                    date: "2025-11-09",
+                    time: "09:45",
+                    status: "approved"
                 }
             ];
             // Sort by date descending (terbaru diatas)
@@ -101,8 +142,17 @@ const Pengumuman = () => {
     // Check if user can create announcements
     const canCreateAnnouncement = user?.role === "Komting";
 
+    // Filter announcements by subscription
+    const filteredAnnouncements = announcements.filter(announcement => {
+        // Komting dapat lihat semua pengumuman
+        if (user?.role === "Komting") return true;
+        
+        // Mahasiswa hanya lihat pengumuman dari courses yang di-subscribe
+        return mySubscriptions.some(sub => sub.name === announcement.subject);
+    });
+
     // Grouping announcements by date
-    const groupedAnnouncements = announcements.reduce((groups, announcement) => {
+    const groupedAnnouncements = filteredAnnouncements.reduce((groups, announcement) => {
         const date = announcement.date;
         if (!groups[date]) groups[date] = [];
         groups[date].push(announcement);

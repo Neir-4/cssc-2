@@ -1,8 +1,31 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
+import apiService from "../services/api.js";
 
 const Materi = () => {
+    const { user } = useAuth();
     const [searchTerm, setSearchTerm] = useState("");
+    const [mySubscriptions, setMySubscriptions] = useState([]);
+    const [loading, setLoading] = useState(true);
+
+    // Load user subscriptions
+    useEffect(() => {
+        const loadSubscriptions = async () => {
+            try {
+                const response = await apiService.getMySubscriptions();
+                setMySubscriptions(response.subscriptions || []);
+            } catch (error) {
+                console.error('Error loading subscriptions:', error);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        if (user) {
+            loadSubscriptions();
+        }
+    }, [user]);
 
     const materials = [
         {
@@ -40,66 +63,33 @@ const Materi = () => {
         {
             id: "kecerdasan-buatan",
             name: "Kecerdasan Buatan",
-            image: "ai.png",
-            pengajar: "Dr. Amalia S.T., M.T. | Dr. Pauzi Ibrahim Nainggolan S.Komp., M.Sc.",
-            meetings: 15,
-            color: "bg-indigo-100 text-indigo-600"
+            image: "kb.png",
+            pengajar: "Dr. Fauzan Nurahmadi S.Kom., M.Cs",
+            meetings: 14,
+            color: "bg-red-100 text-red-600"
         },
         {
             id: "etika-profesi",
             name: "Etika Profesi",
-            image: "etprof.png",
-            pengajar: "Dr. Ir. Elviawaty Muisa Zamzami S.T., M.T., M.M., IPU | Dr. Eng Ade Candra S.T., M.Kom.",
+            image: "etika.png",
+            pengajar: "Dr. Ade Gunawan S.Kom., M.Kom",
             meetings: 10,
-            color: "bg-rose-100 text-rose-600"
-        },
-        {
-            id: "ielts-preparation",
-            name: "IELTS Preparation",
-            image: "ielts.png",
-            pengajar: "Drs. Yulianus Harefa GradDipEd TESOL., MEd TESOL",
-            meetings: 20,
-            color: "bg-teal-100 text-teal-600"
-        },
-        {
-            id: "komputerisasi-ekonomi-bisnis",
-            name: "Komputerisasi Ekon & Bisnis", // Dipendekkan sedikit agar rapi
-            image: "kompre.png",
-            pengajar: "Taufik Akbar Parluhutan SE, M.Si",
-            meetings: 14,
-            color: "bg-cyan-100 text-cyan-600"
-        },
-        {
-            id: "praktikum-pemrograman-website",
-            name: "Praktikum Pemrog. Website",
-            image: "iklc 1.png",
-            pengajar: "Muhammad Dzakwan Attaqiy",
-            meetings: 15,
-            color: "bg-yellow-100 text-yellow-700"
-        },
-        {
-            id: "praktikum-struktur-data",
-            name: "Praktikum Struktur Data",
-            image: "iklc 1.png",
-            pengajar: "Alya Debora Panggabean",
-            meetings: 14,
-            color: "bg-yellow-100 text-yellow-700"
-        },
-        {
-            id: "praktikum-basis-data",
-            name: "Praktikum Basis Data",
-            image: "iklc 1.png",
-            pengajar: "Muhammad Syukron Jazila",
-            meetings: 16,
-            color: "bg-yellow-100 text-yellow-700"
-        },
+            color: "bg-indigo-100 text-indigo-600"
+        }
     ];
 
-    // Fitur Filter Search
-    const filteredMaterials = materials.filter((item) =>
-        item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.pengajar.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    // Filter by subscription first, then by search
+    const filteredMaterials = materials.filter((item) => {
+        // Check if user is subscribed to this course
+        const isSubscribed = mySubscriptions.some(sub => sub.name === item.name);
+        
+        // If user is not subscribed, don't show the material
+        if (!isSubscribed) return false;
+        
+        // Apply search filter
+        return item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+               item.pengajar.toLowerCase().includes(searchTerm.toLowerCase());
+    });
 
     return (
         <div className="min-h-screen bg-gray-50 pt-24 pb-16 px-4 sm:px-6 lg:px-8 font-sans">
