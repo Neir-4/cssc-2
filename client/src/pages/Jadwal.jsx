@@ -38,8 +38,9 @@ const Jadwal = () => {
                 const response = await apiService.getMySchedules();
                 const schedules = response.schedules || [];
                 
-                // Transform API data to match expected format
-                const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+                console.log('📅 Raw schedules from API:', schedules);
+                
+                // Transform API data - keep day_of_week as is
                 const colorMap = {
                     'Pemrograman Website': 'bg-blue-100 text-blue-700',
                     'Kecerdasan Buatan': 'bg-purple-100 text-purple-700',
@@ -49,30 +50,20 @@ const Jadwal = () => {
                     'Struktur Data': 'bg-green-100 text-green-700'
                 };
                 
-                // Group schedules by day
-                const groupedByDay = {};
-                schedules.forEach(schedule => {
-                    if (!schedule.day_of_week) return;
-                    
-                    const dayName = dayNames[schedule.day_of_week];
-                    if (!groupedByDay[dayName]) {
-                        groupedByDay[dayName] = [];
-                    }
-                    
-                    groupedByDay[dayName].push({
-                        subject: schedule.course_name,
-                        time: `${schedule.start_time.substring(0, 5)} - ${schedule.end_time.substring(0, 5)}`,
-                        room: schedule.room_code || 'TBA',
-                        instructor: schedule.lecturer_name || 'TBA',
-                        color: colorMap[schedule.course_name] || 'bg-gray-100 text-gray-700'
-                    });
-                });
-                
-                // Convert to array format
-                const transformedData = Object.entries(groupedByDay).map(([dayName, classes]) => ({
-                    dayName,
-                    classes
+                // Transform schedules - keep day_of_week for matching
+                const transformedData = schedules.map(schedule => ({
+                    id: schedule.id,
+                    course_id: schedule.course_id,
+                    course_name: schedule.course_name,
+                    day_of_week: schedule.day_of_week,
+                    start_time: schedule.start_time.substring(0, 5),
+                    end_time: schedule.end_time.substring(0, 5),
+                    room_code: schedule.room_code || 'TBA',
+                    lecturer_name: schedule.lecturer_name || 'TBA',
+                    color: colorMap[schedule.course_name] || 'bg-gray-100 text-gray-700'
                 }));
+                
+                console.log('🔄 Transformed schedules:', transformedData);
                 
                 setScheduleData(transformedData);
             } catch (err) {
@@ -102,13 +93,23 @@ const Jadwal = () => {
         for (let i = 0; i < 5; i++) {
             const date = new Date(monday);
             date.setDate(monday.getDate() + i);
-            const dayName = DAY_NAMES[date.getDay()];
-            const scheduleForDay = scheduleData.find(s => s.dayName === dayName) || { classes: [] };
+            const dayOfWeek = date.getDay(); // 0=Sunday, 1=Monday, ..., 6=Saturday
+            
+            // Find schedules for this day
+            // API returns day_of_week as 1-7 (1=Monday, 7=Sunday)
+            // JavaScript getDay() returns 0-6 (0=Sunday, 1=Monday, ..., 6=Saturday)
+            // Convert: JS getDay() to API day_of_week
+            const apiDayOfWeek = dayOfWeek === 0 ? 7 : dayOfWeek;
+            
+            const classesForDay = scheduleData.filter(s => s.day_of_week === apiDayOfWeek) || [];
+            
+            console.log(`📅 Day ${DAY_NAMES[dayOfWeek]} (${date.getDate()}) - API day: ${apiDayOfWeek}, Classes: ${classesForDay.length}`);
+            
             days.push({
                 dateObj: date,
-                dayName: dayName,
+                dayName: DAY_NAMES[dayOfWeek],
                 dateNum: date.getDate(),
-                classes: scheduleForDay.classes
+                classes: classesForDay
             });
         }
         return days;
@@ -292,7 +293,7 @@ const Jadwal = () => {
                             {/* Schedule Grid */}
                             <div className="relative overflow-y-auto max-h-[700px] border border-t-0 border-gray-200 rounded-b-lg bg-white">
                                 {/* Grid Background */}
-                                <div className="absolute inset-0 grid grid-cols-[80px_1fr_1fr_1fr_1fr_1fr]">
+                                <div className="absolute inset-0 grid grid-cols-[80px_1fr_1fr_1fr_1fr_1fr] pointer-events-none">
                                     {/* Time Column */}
                                     <div className="border-r border-gray-200 bg-gray-50">
                                         {timeSlots.map((time, idx) => (
@@ -334,30 +335,30 @@ const Jadwal = () => {
                                 )}
 
                                 {/* Schedule Events */}
-                                <div className="absolute inset-0 grid grid-cols-[80px_1fr_1fr_1fr_1fr_1fr] pointer-events-none">
+                                <div className="absolute inset-0 grid grid-cols-[80px_1fr_1fr_1fr_1fr_1fr]">
                                     <div></div>
                                     {weekDays.map((day, dayIdx) => (
-                                        <div key={dayIdx} className="relative pointer-events-auto">
+                                        <div key={dayIdx} className="relative">
                                             {day.classes?.map((cls, clsIdx) => {
-                                                const topPos = calculateTopPosition(cls.time.split(' - ')[0]);
-                                                const height = calculateHeight(
-                                                    cls.time.split(' - ')[0],
-                                                    cls.time.split(' - ')[1]
-                                                );
+                                                const topPos = calculateTopPosition(cls.start_time);
+                                                const height = calculateHeight(cls.start_time, cls.end_time);
+
+                                                console.log(`🎨 Rendering ${cls.course_name}: top=${topPos}px, height=${height}px`);
 
                                                 return (
                                                     <div
                                                         key={clsIdx}
-                                                        className={`absolute left-1 right-1 rounded p-2 text-xs overflow-hidden shadow-sm hover:shadow-md transition cursor-pointer ${cls.color}`}
+                                                        className={`absolute left-1 right-1 rounded p-2 text-xs overflow-hidden shadow-sm hover:shadow-md transition cursor-pointer ${cls.color} z-10`}
                                                         style={{
                                                             top: `${topPos}px`,
-                                                            height: `${height}px`
+                                                            height: `${height}px`,
+                                                            zIndex: 10
                                                         }}
-                                                        title={`${cls.subject}\n${cls.instructor}\n${cls.room}`}
+                                                        title={`${cls.course_name}\n${cls.lecturer_name}\n${cls.room_code}`}
                                                     >
-                                                        <p className="font-semibold truncate">{cls.subject}</p>
-                                                        <p className="text-xs opacity-75 truncate">{cls.time}</p>
-                                                        <p className="text-xs opacity-75 truncate">{cls.room}</p>
+                                                        <p className="font-semibold truncate">{cls.course_name}</p>
+                                                        <p className="text-xs opacity-75 truncate">{cls.start_time} - {cls.end_time}</p>
+                                                        <p className="text-xs opacity-75 truncate">{cls.room_code}</p>
                                                     </div>
                                                 );
                                             })}
