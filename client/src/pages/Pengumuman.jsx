@@ -258,6 +258,7 @@ const Pengumuman = () => {
                 {showCreateForm && (
                     <CreateAnnouncementModal
                         user={user}
+                        subscriptions={mySubscriptions}
                         onClose={() => setShowCreateForm(false)}
                         onSubmit={(newAnnouncement) => {
                             const updated = [newAnnouncement, ...announcements].sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -273,7 +274,7 @@ const Pengumuman = () => {
 };
 
 // --- MODAL COMPONENT (CLEAN VERSION) ---
-const CreateAnnouncementModal = ({ user, onClose, onSubmit }) => {
+const CreateAnnouncementModal = ({ user, subscriptions, onClose, onSubmit }) => {
     const [formData, setFormData] = useState({
         subject: "",
         date: new Date().toISOString().split('T')[0], // Default today yyyy-mm-dd
@@ -325,14 +326,19 @@ const CreateAnnouncementModal = ({ user, onClose, onSubmit }) => {
                     <div className="grid grid-cols-2 gap-4">
                         <div>
                              <label className="block text-sm font-medium text-gray-700 mb-1">Mata Kuliah</label>
-                             <input
-                                type="text"
-                                placeholder="Basis Data / Umum"
-                                className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-amber-400 focus:border-transparent outline-none transition"
+                             <select
+                                className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-amber-400 focus:border-transparent outline-none transition bg-white"
                                 value={formData.subject}
                                 onChange={(e) => setFormData({...formData, subject: e.target.value})}
                                 required
-                            />
+                            >
+                                <option value="">Pilih Mata Kuliah</option>
+                                {subscriptions && subscriptions.map((sub) => (
+                                    <option key={sub.course_id} value={sub.name}>
+                                        {sub.name}
+                                    </option>
+                                ))}
+                            </select>
                         </div>
                         <div>
                              <label className="block text-sm font-medium text-gray-700 mb-1">Tanggal</label>
