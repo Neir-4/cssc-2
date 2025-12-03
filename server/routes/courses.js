@@ -118,7 +118,7 @@ router.get('/:id', async (req, res) => {
     const { id } = req.params;
 
     const result = await pool.query(`
-      SELECT c.id, c.course_code, c.name, c.description, c.default_day, 
+      SELECT c.id, c.course_code, c.name, c.description, c.credits, c.default_day, 
              c.default_start_time, c.default_end_time, c.semester, c.academic_year,
              l.id as lecturer_id, l.name as lecturer_name, l.email as lecturer_email,
              k.id as komting_id, k.name as komting_name, k.email as komting_email,
@@ -156,6 +156,29 @@ router.get('/:id', async (req, res) => {
       error: 'Failed to get course',
       details: error.message
     });
+  }
+});
+
+// Get course details (for reschedule functionality)
+router.get('/:id/details', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query(`
+      SELECT id, course_code, name, description, credits, 
+             lecturer_id, komting_id, default_day, 
+             default_start_time, default_end_time
+      FROM courses WHERE id = $1 AND is_active = true
+    `, [id]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Course not found' });
+    }
+    
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error fetching course details:', error);
+    res.status(500).json({ error: 'Failed to fetch course details' });
   }
 });
 

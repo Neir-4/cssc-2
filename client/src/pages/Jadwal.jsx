@@ -88,15 +88,21 @@ const Jadwal = () => {
         }
 
         try {
-            // Here you would call your API to update the schedule
-            // await apiService.updateSchedule({
-            //   eventId: selectedEvent.id,
-            //   ...newSchedule
-            // });
+            // Call API to update the schedule
+            await apiService.updateSchedule({
+                eventId: selectedEvent.id,
+                courseId: selectedEvent.course_id,
+                newDate: newSchedule.date,
+                newStartTime: newSchedule.startTime,
+                newEndTime: newSchedule.endTime,
+                newRoomId: newSchedule.roomId,
+                newRoomName: newSchedule.roomName
+            });
+            
             alert('Jadwal berhasil diubah!');
             setIsRescheduling(false);
             // Refresh the schedule
-            fetchScheduleData();
+            fetchSchedule();
         } catch (error) {
             console.error('Error rescheduling:', error);
             alert('Gagal mengubah jadwal. Silakan coba lagi.');
@@ -104,16 +110,38 @@ const Jadwal = () => {
     };
 
     // Handle slot selection from RoomAvailability
-    const handleSlotSelect = (slot) => {
-        // Update the new schedule with selected slot
-        setNewSchedule({
-            date: slot.date,
-            startTime: slot.start_time,
-            endTime: slot.end_time,
-            roomId: slot.room_id,
-            roomName: slot.room_name
-        });
-        setShowRoomSearch(false);
+    const handleSlotSelect = async (slot) => {
+        try {
+            // Call API to update the schedule
+            await apiService.updateSchedule({
+                eventId: selectedEvent.id,
+                courseId: selectedEvent.course_id,
+                newDate: slot.date,
+                newStartTime: slot.start_time,
+                newEndTime: slot.end_time,
+                newRoomId: slot.room_id || null, // Handle null room_id
+                newRoomName: slot.room_name || 'Akan ditentukan sistem'
+            });
+            
+            // Update the new schedule with selected slot
+            setNewSchedule({
+                date: slot.date,
+                startTime: slot.start_time,
+                endTime: slot.end_time,
+                roomId: slot.room_id || null,
+                roomName: slot.room_name || 'Akan ditentukan sistem'
+            });
+            
+            setShowRoomSearch(false);
+            setIsRescheduling(false);
+            
+            alert('Jadwal berhasil diubah!');
+            // Refresh the schedule
+            fetchSchedule();
+        } catch (error) {
+            console.error('Error updating schedule:', error);
+            alert('Gagal mengubah jadwal. Silakan coba lagi.');
+        }
     };
 
     // Close the reschedule dialog
@@ -138,79 +166,69 @@ const Jadwal = () => {
     }, [scheduleData]);
 
     // Fetch schedule data from backend
+    const fetchSchedule = async () => {
+        if (!user) return;
+
+        try {
+            setLoading(true);
+            setError(null);
+
+            // Fetch user's schedules from subscribed courses
+            console.log('🔄 Fetching schedules...');
+            const response = await apiService.getMySchedules();
+            console.log('📦 Raw API response:', response);
+
+            // Handle both response formats: direct array or { schedules: [...] }
+            const schedules = Array.isArray(response) ? response :
+                (response.schedules || response.data?.schedules || []);
+
+            console.log('📅 Processed schedules:', schedules);
+
+            // Transform API data - keep day_of_week as is
+            const colorMap = {
+                'Pemrograman Website': 'bg-blue-100 text-blue-700',
+                'Kecerdasan Buatan': 'bg-purple-100 text-purple-700',
+                'Basis Data': 'bg-indigo-100 text-indigo-700',
+                'Etika Profesi': 'bg-pink-100 text-pink-700',
+                'Wirausaha Digital': 'bg-orange-100 text-orange-700',
+                'Struktur Data': 'bg-green-100 text-green-700'
+            };
+
+            // Transform schedules - handle potential undefined values
+            const transformedData = schedules.map(schedule => {
+                const startTime = schedule.start_time ?
+                    (typeof schedule.start_time === 'string' ? schedule.start_time.substring(0, 5) : '00:00') : '00:00';
+                const endTime = schedule.end_time ?
+                    (typeof schedule.end_time === 'string' ? schedule.end_time.substring(0, 5) : '00:00') : '00:00';
+
+                return {
+                    id: schedule.id || Date.now() + Math.random(),
+                    course_id: schedule.course_id || null,
+                    course_name: schedule.course_name || 'Mata Kuliah',
+                    day_of_week: schedule.day_of_week || 1, // Default to Monday if not set
+                    start_time: startTime,
+                    end_time: endTime,
+                    room_code: schedule.room_code || schedule.room_name || 'TBA',
+                    lecturer_name: schedule.lecturer_name || 'Dosen',
+                    color: colorMap[schedule.course_name] || 'bg-gray-100 text-gray-700'
+                };
+            });
+
+            console.log('🔄 Transformed schedules:', transformedData);
+            setScheduleData(transformedData);
+        } catch (err) {
+            console.error('❌ Error fetching schedules:', err);
+            setError(err.message || 'Gagal memuat jadwal');
+        } finally {
+            setLoading(false);
+        }
+    };
+
     useEffect(() => {
         let isMounted = true;
-
-        const fetchSchedule = async () => {
-            if (!user) return;
-
-            try {
-                setLoading(true);
-                setError(null);
-
-                // Fetch user's schedules from subscribed courses
-                console.log('🔄 Fetching schedules...');
-                const response = await apiService.getMySchedules();
-                console.log('📦 Raw API response:', response);
-
-                // Handle both response formats: direct array or { schedules: [...] }
-                const schedules = Array.isArray(response) ? response :
-                    (response.schedules || response.data?.schedules || []);
-
-                console.log('📅 Processed schedules:', schedules);
-
-                if (!isMounted) return;
-
-                // Transform API data - keep day_of_week as is
-                const colorMap = {
-                    'Pemrograman Website': 'bg-blue-100 text-blue-700',
-                    'Kecerdasan Buatan': 'bg-purple-100 text-purple-700',
-                    'Basis Data': 'bg-indigo-100 text-indigo-700',
-                    'Etika Profesi': 'bg-pink-100 text-pink-700',
-                    'Wirausaha Digital': 'bg-orange-100 text-orange-700',
-                    'Struktur Data': 'bg-green-100 text-green-700'
-                };
-
-                // Transform schedules - handle potential undefined values
-                const transformedData = schedules.map(schedule => {
-                    const startTime = schedule.start_time ?
-                        (typeof schedule.start_time === 'string' ? schedule.start_time.substring(0, 5) : '00:00') : '00:00';
-                    const endTime = schedule.end_time ?
-                        (typeof schedule.end_time === 'string' ? schedule.end_time.substring(0, 5) : '00:00') : '00:00';
-
-                    return {
-                        id: schedule.id || Date.now() + Math.random(),
-                        course_id: schedule.course_id || null,
-                        course_name: schedule.course_name || 'Mata Kuliah',
-                        day_of_week: schedule.day_of_week || 1, // Default to Monday if not set
-                        start_time: startTime,
-                        end_time: endTime,
-                        room_code: schedule.room_code || schedule.room_name || 'TBA',
-                        lecturer_name: schedule.lecturer_name || 'Dosen',
-                        color: colorMap[schedule.course_name] || 'bg-gray-100 text-gray-700'
-                    };
-                });
-
-                console.log('🔄 Transformed schedules:', transformedData);
-
-                if (isMounted) {
-                    setScheduleData(transformedData);
-                }
-            } catch (err) {
-                console.error('❌ Error fetching schedules:', err);
-                if (isMounted) {
-                    setError(err.message || 'Gagal memuat jadwal');
-                }
-            } finally {
-                if (isMounted) {
-                    setLoading(false);
-                }
-            }
-        };
-
-        fetchSchedule();
-
-        // Cleanup function
+        if (isMounted) {
+            fetchSchedule();
+        }
         return () => {
             isMounted = false;
         };
@@ -591,9 +609,7 @@ const Jadwal = () => {
                                 <h4 className="font-medium mb-4">Cari Ruangan Tersedia</h4>
                                 <RoomAvailability 
                                     onSelectSlot={handleSlotSelect}
-                                    originalDate={newSchedule.date}
-                                    originalStartTime={newSchedule.startTime}
-                                    originalEndTime={newSchedule.endTime}
+                                    selectedEvent={selectedEvent}
                                 />
                             </div>
                         )}

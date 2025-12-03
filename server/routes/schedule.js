@@ -30,12 +30,13 @@ const authenticateToken = (req, res, next) => {
 
 // Validation schemas
 const updateScheduleSchema = Joi.object({
-  course_id: Joi.number().integer().required(),
-  event_date: Joi.date().iso().required(),
-  start_time: Joi.string().pattern(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/).required(),
-  end_time: Joi.string().pattern(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/).required(),
-  room_id: Joi.number().integer().required(),
-  change_reason: Joi.string().optional()
+  eventId: Joi.number().integer().optional(),
+  courseId: Joi.number().integer().required(),
+  newDate: Joi.date().iso().required(),
+  newStartTime: Joi.string().pattern(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/).required(),
+  newEndTime: Joi.string().pattern(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/).required(),
+  newRoomId: Joi.number().integer().optional().allow(null),
+  newRoomName: Joi.string().optional()
 });
 
 // Get default schedule for a user
@@ -224,13 +225,13 @@ router.post('/update', authenticateToken, async (req, res) => {
       });
     }
 
-    const { course_id, event_date, start_time, end_time, room_id, change_reason } = value;
+    const { eventId, courseId, newDate, newStartTime, newEndTime, newRoomId, newRoomName } = value;
     const komting_id = req.user.id;
 
     // Check if course exists and user is the komting for this course
     const courseResult = await pool.query(
       'SELECT id, name, komting_id FROM courses WHERE id = $1 AND is_active = true',
-      [course_id]
+      [courseId]
     );
 
     if (courseResult.rows.length === 0) {
@@ -250,130 +251,103 @@ router.post('/update', authenticateToken, async (req, res) => {
       });
     }
 
-    // Validate time
-    const start = new Date(`2000-01-01 ${start_time}`);
-    const end = new Date(`2000-01-01 ${end_time}`);
-    
-    if (start >= end) {
-      return res.status(400).json({
-        error: 'Invalid time range',
-        details: 'Start time must be before end time'
-      });
-    }
-
-    // Check if room exists and is available
-    const roomResult = await pool.query(
-      'SELECT id, name FROM rooms WHERE id = $1 AND is_active = true',
-      [room_id]
-    );
-
-    if (roomResult.rows.length === 0) {
-      return res.status(404).json({
-        error: 'Room not found',
-        details: 'Room does not exist or is inactive'
-      });
-    }
-
-    // Check for room conflicts
-    const conflictResult = await pool.query(`
-      SELECT se.id, c.course_code, c.name as course_name
-      FROM schedule_events se
-      JOIN courses c ON se.course_id = c.id
-      WHERE se.room_id = $1 
-      AND se.event_date = $2
-      AND se.status != 'cancelled'
-      AND (
-        (se.start_time <= $3 AND se.end_time > $3) OR
-        (se.start_time < $4 AND se.end_time >= $4) OR
-        (se.start_time >= $3 AND se.end_time <= $4)
-      )
-    `, [room_id, event_date, start_time, end_time]);
-
-    if (conflictResult.rows.length > 0) {
-      return res.status(409).json({
-        error: 'Room conflict',
-        details: `Room is already booked by ${conflictResult.rows[0].course_code} - ${conflictResult.rows[0].course_name} at this time`
-      });
-    }
-
-    // Check if there's an existing event for this course on this date
-    const existingEventResult = await pool.query(
-      'SELECT id FROM schedule_events WHERE course_id = $1 AND event_date = $2 AND status != \'cancelled\'',
-      [course_id, event_date]
-    );
-
-    const client = await pool.connect();
-    
-    try {
-      await client.query('BEGIN');
-
-      let newEvent;
+    // Find the specific schedule event to update
+    let targetEvent;
+    if (eventId) {
+      // Update specific event
+      const eventResult = await pool.query(
+        'SELECT * FROM schedule_events WHERE id = $1 AND course_id = $2',
+        [eventId, courseId]
+      );
       
-      if (existingEventResult.rows.length > 0) {
-        // Update existing event
-        const existingEventId = existingEventResult.rows[0].id;
-        
-        // Mark previous event as replaced
-        await client.query(
-          'UPDATE schedule_events SET status = \'replaced\' WHERE id = $1',
-          [existingEventId]
-        );
-
-        // Create new event
-        newEvent = await client.query(`
-          INSERT INTO schedule_events (course_id, room_id, event_date, start_time, end_time, 
-                                      status, changed_by, change_reason, previous_event_id)
-          VALUES ($1, $2, $3, $4, $5, 'update', $6, $7, $8)
-          RETURNING id, created_at
-        `, [course_id, room_id, event_date, start_time, end_time, komting_id, change_reason || null, existingEventId]);
-      } else {
-        // Create new event
-        newEvent = await client.query(`
-          INSERT INTO schedule_events (course_id, room_id, event_date, start_time, end_time, 
-                                      status, changed_by, change_reason)
-          VALUES ($1, $2, $3, $4, $5, 'update', $6, $7)
-          RETURNING id, created_at
-        `, [course_id, room_id, event_date, start_time, end_time, komting_id, change_reason || null]);
-      }
-
-      await client.query('COMMIT');
-
-      // Get event details for response
-      const eventDetailsResult = await pool.query(`
-        SELECT se.id, se.event_date, se.start_time, se.end_time, se.status, se.change_reason,
-               c.course_code, c.name as course_name,
-               r.name as room_name, r.capacity, r.floor, r.building,
-               u.name as changed_by_name
-        FROM schedule_events se
-        JOIN courses c ON se.course_id = c.id
-        JOIN rooms r ON se.room_id = r.id
-        JOIN users u ON se.changed_by = u.id
-        WHERE se.id = $1
-      `, [newEvent.rows[0].id]);
-
-      const eventDetails = eventDetailsResult.rows[0];
-
-      // Emit real-time update to connected clients
-      const io = req.app.get('io');
-      if (io) {
-        // Notify course subscribers
-        io.to(`course-${course_id}`).emit('schedule-updated', {
-          event: eventDetails,
-          message: `Schedule updated for ${course.course_code} - ${course.name}`
+      if (eventResult.rows.length === 0) {
+        return res.status(404).json({
+          error: 'Schedule event not found',
+          details: 'The specific schedule event does not exist'
         });
       }
-
-      res.status(201).json({
-        message: 'Schedule updated successfully',
-        event: eventDetails
-      });
-
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
+      
+      targetEvent = eventResult.rows[0];
+    } else {
+      // Find the next event for this course (from today onwards)
+      const eventResult = await pool.query(
+        `SELECT * FROM schedule_events 
+         WHERE course_id = $1 AND event_date >= CURRENT_DATE 
+         ORDER BY event_date ASC LIMIT 1`,
+        [courseId]
+      );
+      
+      if (eventResult.rows.length === 0) {
+        return res.status(404).json({
+          error: 'No upcoming events found',
+          details: 'No upcoming schedule events found for this course'
+        });
+      }
+      
+      targetEvent = eventResult.rows[0];
     }
+
+    // Find available room or use specified room
+    let finalRoomId = newRoomId;
+    if (!finalRoomId) {
+      // Auto-assign available room
+      const availableRoomResult = await pool.query(
+        `SELECT r.id FROM rooms r
+         WHERE r.id NOT IN (
+           SELECT se.room_id FROM schedule_events se
+           WHERE se.event_date = $1 AND se.status != 'cancelled'
+           AND (
+             (se.start_time <= $2 AND se.end_time > $2) OR
+             (se.start_time < $3 AND se.end_time >= $3) OR
+             (se.start_time >= $2 AND se.end_time <= $3)
+           )
+         )
+         LIMIT 1`,
+        [newDate, newStartTime, newEndTime]
+      );
+      
+      if (availableRoomResult.rows.length > 0) {
+        finalRoomId = availableRoomResult.rows[0].id;
+      } else {
+        return res.status(400).json({
+          error: 'No available rooms',
+          details: 'No rooms available for the selected time slot'
+        });
+      }
+    }
+
+    // Mark the old event as replaced
+    await pool.query(
+      'UPDATE schedule_events SET status = \'replaced\' WHERE id = $1',
+      [targetEvent.id]
+    );
+
+    // Create new schedule event
+    const newEventResult = await pool.query(
+      `INSERT INTO schedule_events 
+       (course_id, room_id, event_date, start_time, end_time, status, changed_by, previous_event_id)
+       VALUES ($1, $2, $3, $4, $5, 'scheduled', $6, $7)
+       RETURNING *`,
+      [courseId, finalRoomId, newDate, newStartTime, newEndTime, komting_id, targetEvent.id]
+    );
+
+    const newEvent = newEventResult.rows[0];
+
+    // Get room details for response
+    const roomResult = await pool.query('SELECT name FROM rooms WHERE id = $1', [finalRoomId]);
+    const roomName = roomResult.rows[0]?.name || 'Unknown';
+
+    res.json({
+      message: 'Schedule updated successfully',
+      newEvent: {
+        id: newEvent.id,
+        course_id: courseId,
+        event_date: newEvent.event_date,
+        start_time: newEvent.start_time,
+        end_time: newEvent.end_time,
+        room_name: roomName
+      }
+    });
 
   } catch (error) {
     console.error('Update schedule error:', error);

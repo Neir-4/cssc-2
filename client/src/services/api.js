@@ -118,6 +118,10 @@ class ApiService {
     return this.get(`/courses/${id}`);
   }
 
+  async getCourseDetails(courseId) {
+    return this.get(`/courses/${courseId}/details`);
+  }
+
   async subscribeCourse(courseId) {
     return this.post('/courses/subscribe', { course_id: courseId });
   }
@@ -214,6 +218,10 @@ class ApiService {
 
   async getAllSchedules() {
     return this.get('/courses/schedules/all');
+  }
+
+  async updateSchedule(scheduleData) {
+    return this.post('/schedule/update', scheduleData);
   }
 
   // Announcements methods
