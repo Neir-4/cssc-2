@@ -99,12 +99,6 @@ class ApiService {
     return response;
   }
 
-  // Find available rooms for rescheduling
-  async findAvailableRooms(params) {
-    const queryParams = new URLSearchParams(params).toString();
-    return this.get(`/rooms/available-for-reschedule?${queryParams}`);
-  }
-
   async getCurrentUser() {
     return this.get('/auth/me');
   }
