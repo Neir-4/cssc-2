@@ -11,21 +11,21 @@ export const AuthProvider = ({ children }) => {
   // Check for existing token and validate user on mount
   useEffect(() => {
     const initializeAuth = async () => {
-      const token = localStorage.getItem('cssc-token');
-      
+      const token = localStorage.getItem("cssc-token");
+
       if (token) {
         try {
           apiService.setToken(token);
           const response = await apiService.getCurrentUser();
           setUser(response.user);
         } catch (error) {
-          console.error('Token validation failed:', error);
+          console.error("Token validation failed:", error);
           // Clear invalid token
-          localStorage.removeItem('cssc-token');
+          localStorage.removeItem("cssc-token");
           apiService.setToken(null);
         }
       }
-      
+
       setLoading(false);
     };
 
@@ -36,21 +36,17 @@ export const AuthProvider = ({ children }) => {
     try {
       setLoading(true);
       setError(null);
-      
+
       const response = await apiService.register(data);
-      
-      // Map role to proper format for simplified system
-      const userWithRole = {
-        ...response.user,
-        role: response.user.role === "komting" ? "Komting" : 
-              response.user.role === "admin" ? "Admin" : "Admin"
-      };
-      
-      setUser(userWithRole);
+
+      setUser(response.user);
       localStorage.setItem("cssc-token", response.token);
-      localStorage.setItem("cssc-registered-user", JSON.stringify(userWithRole));
-      
-      return { success: true, user: userWithRole };
+      localStorage.setItem(
+        "cssc-registered-user",
+        JSON.stringify(response.user)
+      );
+
+      return { success: true, user: response.user };
     } catch (error) {
       setError(error.message);
       return { success: false, error: error.message };
@@ -63,21 +59,17 @@ export const AuthProvider = ({ children }) => {
     try {
       setLoading(true);
       setError(null);
-      
+
       const response = await apiService.login(email, password);
-      
-      // Ensure role mapping is consistent with simplified system
-      const userWithRole = {
-        ...response.user,
-        role: response.user.role === "komting" ? "Komting" : 
-              response.user.role === "admin" ? "Admin" : "Admin"
-      };
-      
-      setUser(userWithRole);
+
+      setUser(response.user);
       localStorage.setItem("cssc-token", response.token);
-      localStorage.setItem("cssc-registered-user", JSON.stringify(userWithRole));
-      
-      return { success: true, user: userWithRole };
+      localStorage.setItem(
+        "cssc-registered-user",
+        JSON.stringify(response.user)
+      );
+
+      return { success: true, user: response.user };
     } catch (error) {
       setError(error.message);
       return { success: false, error: error.message };
@@ -90,22 +82,19 @@ export const AuthProvider = ({ children }) => {
     try {
       setLoading(true);
       setError(null);
-      
+
       const response = await apiService.updateProfile(newData);
-      
-      const updatedUser = {
-        ...response.user,
-        role: response.user.role === "komting" ? "Komting" : 
-              response.user.role === "admin" ? "Admin" : "Admin"
-      };
-      
-      setUser(updatedUser);
-      
+
+      setUser(response.user);
+
       // Update localStorage to maintain consistency
-      localStorage.setItem("cssc-current-user", JSON.stringify(updatedUser));
-      localStorage.setItem("cssc-registered-user", JSON.stringify(updatedUser));
-      
-      return { success: true, user: updatedUser };
+      localStorage.setItem("cssc-current-user", JSON.stringify(response.user));
+      localStorage.setItem(
+        "cssc-registered-user",
+        JSON.stringify(response.user)
+      );
+
+      return { success: true, user: response.user };
     } catch (error) {
       setError(error.message);
       return { success: false, error: error.message };
@@ -129,16 +118,18 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ 
-      user, 
-      login, 
-      logout, 
-      register, 
-      updateUser, 
-      loading, 
-      error, 
-      clearError 
-    }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        login,
+        logout,
+        register,
+        updateUser,
+        loading,
+        error,
+        clearError,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
