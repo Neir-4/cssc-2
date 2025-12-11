@@ -39,15 +39,15 @@ export const AuthProvider = ({ children }) => {
       
       const response = await apiService.register(data);
       
-      // Map role to proper format for announcement system
+      // Map role to proper format for simplified system
       const userWithRole = {
         ...response.user,
-        role: response.user.role === "dosen" ? "Dosen" : 
-              response.user.role === "mahasiswa" ? "Anggota" : 
-              response.user.role === "komting" ? "Komting" : "Anggota"
+        role: response.user.role === "komting" ? "Komting" : 
+              response.user.role === "admin" ? "Admin" : "Admin"
       };
       
       setUser(userWithRole);
+      localStorage.setItem("cssc-token", response.token);
       localStorage.setItem("cssc-registered-user", JSON.stringify(userWithRole));
       
       return { success: true, user: userWithRole };
@@ -66,16 +66,15 @@ export const AuthProvider = ({ children }) => {
       
       const response = await apiService.login(email, password);
       
-      // Ensure role mapping is consistent
+      // Ensure role mapping is consistent with simplified system
       const userWithRole = {
         ...response.user,
-        role: response.user.role === "dosen" ? "Dosen" : 
-              response.user.role === "mahasiswa" ? "Anggota" : 
-              response.user.role === "komting" ? "Komting" : 
-              response.user.role || "Anggota"
+        role: response.user.role === "komting" ? "Komting" : 
+              response.user.role === "admin" ? "Admin" : "Admin"
       };
       
       setUser(userWithRole);
+      localStorage.setItem("cssc-token", response.token);
       localStorage.setItem("cssc-registered-user", JSON.stringify(userWithRole));
       
       return { success: true, user: userWithRole };
@@ -96,10 +95,8 @@ export const AuthProvider = ({ children }) => {
       
       const updatedUser = {
         ...response.user,
-        role: response.user.role === "dosen" ? "Dosen" : 
-              response.user.role === "mahasiswa" ? "Anggota" : 
-              response.user.role === "komting" ? "Komting" : 
-              response.user.role || "Anggota"
+        role: response.user.role === "komting" ? "Komting" : 
+              response.user.role === "admin" ? "Admin" : "Admin"
       };
       
       setUser(updatedUser);

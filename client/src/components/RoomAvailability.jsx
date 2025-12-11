@@ -15,41 +15,29 @@ const RoomAvailability = ({ onSelectSlot, selectedEvent }) => {
     const [error, setError] = useState('');
     const [courseCredits, setCourseCredits] = useState(null);
 
+    // Helper function to determine credits by course name
+    const getCreditsByCourseName = (courseName = '') => {
+        const threeCredits = ['Pemrograman Website', 'Kecerdasan Buatan', 'Basis Data', 'Struktur Data'];
+        const twoCredits = ['Etika Profesi', 'Wirausaha Digital'];
+        
+        if (threeCredits.some(course => courseName.includes(course))) return 3;
+        if (twoCredits.some(course => courseName.includes(course))) return 2;
+        return 2; // Default
+    };
+
     // Fetch course credits to calculate default duration
     useEffect(() => {
         const fetchCourseCredits = async () => {
-            if (selectedEvent?.course_id) {
-                try {
-                    const response = await apiService.getCourseDetails(selectedEvent.course_id);
-                    const course = response.course || response; // Handle both response formats
-                    
-                    // Set credits based on course name if not available in database
-                    let credits = course.credits;
-                    if (!credits) {
-                        // Fallback: set credits based on course name
-                        const courseName = selectedEvent.course_name || '';
-                        if (courseName.includes('Pemrograman Website') || courseName.includes('Kecerdasan Buatan') || courseName.includes('Basis Data') || courseName.includes('Struktur Data')) {
-                            credits = 3;
-                        } else if (courseName.includes('Etika Profesi') || courseName.includes('Wirausaha Digital')) {
-                            credits = 2;
-                        } else {
-                            credits = 2; // Default fallback
-                        }
-                    }
-                    
-                    setCourseCredits(credits);
-                } catch (err) {
-                    console.error('Error fetching course credits:', err);
-                    // Fallback based on course name
-                    const courseName = selectedEvent.course_name || '';
-                    let credits = 2;
-                    if (courseName.includes('Pemrograman Website') || courseName.includes('Kecerdasan Buatan') || courseName.includes('Basis Data') || courseName.includes('Struktur Data')) {
-                        credits = 3;
-                    } else if (courseName.includes('Etika Profesi') || courseName.includes('Wirausaha Digital')) {
-                        credits = 2;
-                    }
-                    setCourseCredits(credits);
-                }
+            if (!selectedEvent?.course_id) return;
+            
+            try {
+                const response = await apiService.getCourseDetails(selectedEvent.course_id);
+                const course = response.course || response;
+                const credits = course.credits || getCreditsByCourseName(selectedEvent.course_name);
+                setCourseCredits(credits);
+            } catch (err) {
+                console.error('Error fetching course credits:', err);
+                setCourseCredits(getCreditsByCourseName(selectedEvent.course_name));
             }
         };
         fetchCourseCredits();
@@ -69,21 +57,17 @@ const RoomAvailability = ({ onSelectSlot, selectedEvent }) => {
         setError('');
         
         try {
-            const response = await apiService.getAllSchedules(); // Get all schedules
-            const schedules = Array.isArray(response) ? response :
-                (response.schedules || response.data?.schedules || []);
-            
-            const dayOfWeek = new Date(date).getDay(); // 0=Sunday, 1=Monday, etc.
-            
-            // Filter schedules for the selected day (convert to API day format)
-            const apiDayOfWeek = dayOfWeek === 0 ? 7 : dayOfWeek; // Sunday = 7 in API
-            const daySchedules = schedules.filter(schedule => {
-                const scheduleDay = typeof schedule.day_of_week === 'string' ?
-                    parseInt(schedule.day_of_week, 10) : schedule.day_of_week;
-                return scheduleDay === apiDayOfWeek;
+            // Get actual schedule events for the specific date
+            const response = await apiService.getRealSchedule({
+                start_date: date,
+                end_date: date
             });
             
-            setDailySchedule(daySchedules);
+            // Extract events for the selected date
+            const events = response.events || {};
+            const dayEvents = events[date] || [];
+            
+            setDailySchedule(dayEvents);
             setStep(3);
         } catch (err) {
             setError('Gagal memuat jadwal harian. Silakan coba lagi.');
@@ -113,28 +97,21 @@ const RoomAvailability = ({ onSelectSlot, selectedEvent }) => {
     // Fetch available rooms for selected time slot
     const fetchAvailableRooms = async (startTime) => {
         setLoading(true);
+        setError('');
         try {
             const endTime = calculateEndTime(startTime);
-            const response = await apiService.findAvailableRooms({
-                date: date,
-                start_time: startTime,
-                end_time: endTime
-            });
+            const response = await apiService.getAvailableRooms(date, startTime, endTime);
             
-            const rooms = Array.isArray(response) ? response :
-                (response.rooms || response.data?.rooms || []);
-            setAvailableRooms(rooms);
+            const availableRooms = response.available_rooms || [];
+            setAvailableRooms(availableRooms);
+            
+            if (availableRooms.length === 0) {
+                setError('Tidak ada ruangan yang tersedia untuk waktu ini. Silakan pilih waktu lain.');
+            }
         } catch (err) {
             console.error('Error fetching available rooms:', err);
-            // Fallback: show default rooms
-            setAvailableRooms([
-                { id: 1, name: 'D-101', building: 'Gedung D' },
-                { id: 2, name: 'D-102', building: 'Gedung D' },
-                { id: 3, name: 'D-103', building: 'Gedung D' },
-                { id: 4, name: 'D-104', building: 'Gedung D' },
-                { id: 5, name: 'D-105', building: 'Gedung D' },
-                { id: 6, name: 'D-106', building: 'Gedung D' }
-            ]);
+            setError('Gagal memuat data ruangan. Silakan coba lagi.');
+            setAvailableRooms([]);
         } finally {
             setLoading(false);
         }
@@ -174,14 +151,12 @@ const RoomAvailability = ({ onSelectSlot, selectedEvent }) => {
                 
                 // Check if this slot is available
                 const endTime = calculateEndTime(timeStr);
-                const isAvailable = !dailySchedule.some(schedule => {
-                    const scheduleStart = schedule.start_time;
-                    const scheduleEnd = schedule.end_time;
+                const isAvailable = !dailySchedule.some(event => {
+                    const eventStart = event.start_time;
+                    const eventEnd = event.end_time;
                     
-                    // Check if time slot overlaps with existing schedule
-                    return (timeStr >= scheduleStart && timeStr < scheduleEnd) ||
-                           (endTime > scheduleStart && endTime <= scheduleEnd) ||
-                           (timeStr <= scheduleStart && endTime >= scheduleEnd);
+                    // Check if time slot overlaps with existing event
+                    return (timeStr < eventEnd && endTime > eventStart);
                 });
                 
                 slots.push({
@@ -254,7 +229,10 @@ const RoomAvailability = ({ onSelectSlot, selectedEvent }) => {
                                         max="300"
                                         step="30"
                                         value={customDuration}
-                                        onChange={(e) => setCustomDuration(parseInt(e.target.value))}
+                                        onChange={(e) => {
+                                            const value = parseInt(e.target.value) || 30;
+                                            setCustomDuration(Math.max(30, Math.min(300, value)));
+                                        }}
                                         className="ml-2 w-20 p-1 border rounded"
                                         disabled={durationType !== 'custom'}
                                     />
@@ -436,8 +414,11 @@ const RoomAvailability = ({ onSelectSlot, selectedEvent }) => {
             )}
 
             {error && (
-                <div className="mt-4 p-3 bg-red-100 text-red-700 rounded">
-                    {error}
+                <div className="mt-4 p-3 bg-red-100 text-red-700 rounded border border-red-200">
+                    <div className="flex items-center">
+                        <span className="font-medium">Error:</span>
+                        <span className="ml-2">{error}</span>
+                    </div>
                 </div>
             )}
         </div>

@@ -1,27 +1,27 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import Joi from 'joi';
 import pool from '../config/database.js';
+import { authenticate, validate, userSchemas, logActivity, logSecurityEvent } from '../middleware/index.js';
 
 const router = express.Router();
 
-// Validation schemas
-const registerSchema = Joi.object({
-  name: Joi.string().min(2).max(255).required(),
-  email: Joi.string().email().required(),
-  password: Joi.string().min(6).required(),
-  role: Joi.string().valid('mahasiswa', 'dosen', 'komting').required(),
-  phone: Joi.string().optional()
-});
 
-const loginSchema = Joi.object({
-  email: Joi.string().email().required(),
-  password: Joi.string().required()
-});
 
 // Generate JWT token
 const generateToken = (user) => {
+  console.log('🎫 Generating token for user:', {
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    name: user.name,
+    hasJwtSecret: !!process.env.JWT_SECRET
+  });
+  
+  if (!process.env.JWT_SECRET) {
+    throw new Error('JWT_SECRET environment variable is not set');
+  }
+  
   return jwt.sign(
     { 
       id: user.id, 
@@ -35,18 +35,13 @@ const generateToken = (user) => {
 };
 
 // Register new user
-router.post('/register', async (req, res) => {
+router.post('/register', 
+  validate(userSchemas.register),
+  logActivity('USER_REGISTER'),
+  async (req, res) => {
   try {
-    // Validate input
-    const { error, value } = registerSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({
-        error: 'Validation Error',
-        details: error.details[0].message
-      });
-    }
+    const { name, email, password, role, phone } = req.body;
 
-    const { name, email, password, role, phone } = value;
 
     // Check if user already exists
     const existingUser = await pool.query(
@@ -101,27 +96,35 @@ router.post('/register', async (req, res) => {
 });
 
 // Login user
-router.post('/login', async (req, res) => {
+router.post('/login', 
+  validate(userSchemas.login),
+  async (req, res) => {
   try {
-    // Validate input
-    const { error, value } = loginSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({
-        error: 'Validation Error',
-        details: error.details[0].message
-      });
-    }
-
-    const { email, password } = value;
+    const { email, password } = req.body;
+    console.log('🔐 Login attempt:', { email, hasPassword: !!password });
+    console.log('✅ Input validated for email:', email);
 
     // Find user
+    console.log('🔍 Searching for user with email:', email);
     const result = await pool.query(
       `SELECT id, name, email, password_hash, role, phone, created_at
        FROM users WHERE email = $1`,
       [email]
     );
 
+    console.log('📊 Database query result:', {
+      rowCount: result.rows.length,
+      foundUser: result.rows.length > 0 ? {
+        id: result.rows[0]?.id,
+        name: result.rows[0]?.name,
+        email: result.rows[0]?.email,
+        role: result.rows[0]?.role,
+        hasPasswordHash: !!result.rows[0]?.password_hash
+      } : null
+    });
+
     if (result.rows.length === 0) {
+      console.log('❌ User not found for email:', email);
       return res.status(401).json({
         error: 'Invalid credentials',
         details: 'Email or password is incorrect'
@@ -129,10 +132,21 @@ router.post('/login', async (req, res) => {
     }
 
     const user = result.rows[0];
+    console.log('👤 User found:', {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role
+    });
 
     // Verify password
+    console.log('🔒 Verifying password...');
     const isValidPassword = await bcrypt.compare(password, user.password_hash);
+    console.log('🔑 Password verification result:', isValidPassword);
+    
     if (!isValidPassword) {
+      console.log('❌ Invalid password for user:', email);
+      await logSecurityEvent('FAILED_LOGIN', { email, reason: 'invalid_password' }, req);
       return res.status(401).json({
         error: 'Invalid credentials',
         details: 'Email or password is incorrect'
@@ -140,9 +154,11 @@ router.post('/login', async (req, res) => {
     }
 
     // Generate token
+    console.log('🎫 Generating JWT token...');
     const token = generateToken(user);
+    console.log('✅ Token generated successfully');
 
-    res.json({
+    const response = {
       message: 'Login successful',
       user: {
         id: user.id,
@@ -153,10 +169,33 @@ router.post('/login', async (req, res) => {
         created_at: user.created_at
       },
       token
+    };
+
+    console.log('🎉 Login successful for user:', {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role
     });
 
+    res.json(response);
+
   } catch (error) {
-    console.error('Login error:', error);
+    console.error('💥 Login error:', {
+      message: error.message,
+      stack: error.stack,
+      code: error.code,
+      detail: error.detail
+    });
+    
+    // Check if it's a database connection error
+    if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+      return res.status(500).json({
+        error: 'Database connection failed',
+        details: 'Unable to connect to database. Please check database configuration.'
+      });
+    }
+    
     res.status(500).json({
       error: 'Login failed',
       details: error.message
@@ -165,56 +204,12 @@ router.post('/login', async (req, res) => {
 });
 
 // Get current user (protected route)
-router.get('/me', async (req, res) => {
+router.get('/me', authenticate, async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    
-    if (!token) {
-      return res.status(401).json({
-        error: 'No token provided',
-        details: 'Authorization token is required'
-      });
-    }
 
-    // Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-    // Get user from database
-    const result = await pool.query(
-      `SELECT id, name, email, role, phone, created_at, updated_at
-       FROM users WHERE id = $1`,
-      [decoded.id]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        error: 'User not found',
-        details: 'User no longer exists'
-      });
-    }
-
-    const user = result.rows[0];
-
-    res.json({
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        phone: user.phone,
-        created_at: user.created_at,
-        updated_at: user.updated_at
-      }
-    });
+    res.json({ user: req.user });
 
   } catch (error) {
-    if (error.name === 'JsonWebTokenError') {
-      return res.status(401).json({
-        error: 'Invalid token',
-        details: 'Token is invalid or expired'
-      });
-    }
-
     console.error('Get user error:', error);
     res.status(500).json({
       error: 'Failed to get user',
@@ -224,36 +219,13 @@ router.get('/me', async (req, res) => {
 });
 
 // Update user profile
-router.put('/profile', async (req, res) => {
+router.put('/profile', 
+  authenticate,
+  validate(userSchemas.updateProfile),
+  logActivity('USER_UPDATE_PROFILE'),
+  async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    
-    if (!token) {
-      return res.status(401).json({
-        error: 'No token provided',
-        details: 'Authorization token is required'
-      });
-    }
-
-    // Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-    // Validation schema for update
-    const updateSchema = Joi.object({
-      name: Joi.string().min(2).max(255).optional(),
-      phone: Joi.string().optional(),
-      email: Joi.string().email().optional()
-    });
-
-    const { error, value } = updateSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({
-        error: 'Validation Error',
-        details: error.details[0].message
-      });
-    }
-
-    const { name, phone, email } = value;
+    const { name, phone, email } = req.body;
 
     // Build update query dynamically
     const updateFields = [];
@@ -272,10 +244,11 @@ router.put('/profile', async (req, res) => {
       // Check if email is already taken by another user
       const existingEmail = await pool.query(
         'SELECT id FROM users WHERE email = $1 AND id != $2',
-        [email, decoded.id]
+        [email, req.user.id]
       );
       
       if (existingEmail.rows.length > 0) {
+        await logSecurityEvent('EMAIL_CONFLICT', { email, userId: req.user.id }, req);
         return res.status(409).json({
           error: 'Email already taken',
           details: 'This email is already registered to another user'
@@ -293,7 +266,7 @@ router.put('/profile', async (req, res) => {
       });
     }
 
-    updateValues.push(decoded.id);
+    updateValues.push(req.user.id);
 
     // Update user
     const result = await pool.query(
@@ -326,13 +299,6 @@ router.put('/profile', async (req, res) => {
     });
 
   } catch (error) {
-    if (error.name === 'JsonWebTokenError') {
-      return res.status(401).json({
-        error: 'Invalid token',
-        details: 'Token is invalid or expired'
-      });
-    }
-
     console.error('Update profile error:', error);
     res.status(500).json({
       error: 'Failed to update profile',

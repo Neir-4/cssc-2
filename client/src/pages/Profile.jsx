@@ -36,16 +36,16 @@ const Profile = () => {
     try {
       setLoadingCourses(true);
       
-      // Load all available courses
-      const coursesResponse = await apiService.getCourses();
-      console.log('📚 All courses:', coursesResponse.courses?.length || 0);
-      setAllCourses(coursesResponse.courses || []);
-      
-      // Load user's subscriptions
+      // Load user's subscriptions first
       const subsResponse = await apiService.getMySubscriptions();
       console.log('📋 My subscriptions:', subsResponse.subscriptions?.length || 0);
       console.log('📋 Subscription data:', subsResponse.subscriptions);
       setMySubscriptions(subsResponse.subscriptions || []);
+      
+      // Load all available courses (for subscription management)
+      const coursesResponse = await apiService.getCourses({ limit: 100 });
+      console.log('📚 All courses:', coursesResponse.courses?.length || 0);
+      setAllCourses(coursesResponse.courses || []);
       
     } catch (error) {
       console.error('Error loading courses:', error);
@@ -83,8 +83,8 @@ const Profile = () => {
     return subscribed;
   };
 
-  // Filter courses based on search
-  const filteredCourses = allCourses.filter(course => 
+  // Filter courses based on search and subscription mode
+  const filteredCourses = (subscriptionMode ? allCourses : mySubscriptions).filter(course => 
     course.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     course.course_code.toLowerCase().includes(searchTerm.toLowerCase()) ||
     course.lecturer_name?.toLowerCase().includes(searchTerm.toLowerCase())
@@ -213,15 +213,16 @@ const Profile = () => {
                   <div className="space-y-3 max-h-96 overflow-y-auto">
                     {displayedCourses.length === 0 ? (
                       <p className="text-gray-500 text-center py-4">
-                        {searchTerm ? 'Tidak ada mata kuliah yang cocok' : 'Belum ada mata kuliah tersedia'}
+                        {searchTerm ? 'Tidak ada mata kuliah yang cocok' : 
+                         subscriptionMode ? 'Belum ada mata kuliah tersedia' : 'Belum berlangganan mata kuliah apapun'}
                       </p>
                     ) : (
                       <>
                         {displayedCourses.map((course) => {
-                          const subscribed = isSubscribed(course.id);
+                          const subscribed = isSubscribed(course.id || course.course_id);
                           return (
                             <div
-                              key={course.id}
+                              key={course.id || course.course_id || `course-${Math.random()}`}
                               className={`flex items-center justify-between p-4 rounded-lg border transition-colors ${
                                 subscribed
                                   ? 'bg-blue-50 border-blue-200'
@@ -239,14 +240,14 @@ const Profile = () => {
                               {subscriptionMode ? (
                                 subscribed ? (
                                   <button
-                                    onClick={() => handleUnsubscribe(course.id)}
+                                    onClick={() => handleUnsubscribe(course.id || course.course_id)}
                                     className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 transition-colors text-sm"
                                   >
                                     Berhenti
                                   </button>
                                 ) : (
                                   <button
-                                    onClick={() => handleSubscribe(course.id)}
+                                    onClick={() => handleSubscribe(course.id || course.course_id)}
                                     className="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700 transition-colors text-sm"
                                   >
                                     Berlangganan

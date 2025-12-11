@@ -1,0 +1,9 @@
+{
+  "name": "cssc-project",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "CSSC Classroom Scheduling System",
+  "scripts": {
+    "quick-fix": "node quick-fix.js"
+  }
+}

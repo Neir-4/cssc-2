@@ -12,11 +12,18 @@ import { fileURLToPath } from 'url';
 import authRoutes from './routes/auth.js';
 import courseRoutes from './routes/courses.js';
 import scheduleRoutes from './routes/schedule.js';
+import scheduleV2Routes from './routes/schedule-v2.js';
+import scheduleNewRoutes from './routes/schedule-new.js';
+import scheduleFixedRoutes from './routes/schedule-fixed.js';
 import roomRoutes from './routes/rooms.js';
 import notificationRoutes from './routes/notifications.js';
 import announcementRoutes from './routes/announcements.js';
+import materialRoutes from './routes/materials.js';
 
-// Import database
+// Import middleware
+import { requestLogger } from './middleware/index.js';
+
+// Import database (connection will be tested at startup)
 import './config/database.js';
 
 dotenv.config();
@@ -53,13 +60,37 @@ app.use('/api/', limiter);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Request logging
+app.use(requestLogger);
+
 // Health check endpoint
-app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
-  });
+app.get('/api/health', async (req, res) => {
+  try {
+    // Test database connection
+    const { default: pool } = await import('./config/database.js');
+    const dbResult = await pool.query('SELECT NOW() as db_time');
+    
+    res.json({ 
+      status: 'OK', 
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || 'development',
+      database: {
+        connected: true,
+        server_time: dbResult.rows[0].db_time
+      }
+    });
+  } catch (error) {
+    console.error('Health check database error:', error);
+    res.status(503).json({
+      status: 'ERROR',
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || 'development',
+      database: {
+        connected: false,
+        error: error.message
+      }
+    });
+  }
 });
 
 // Root endpoint - API info
@@ -83,10 +114,14 @@ app.get('/', (req, res) => {
 // API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/courses', courseRoutes);
-app.use('/api/schedule', scheduleRoutes);
+app.use('/api/schedule', scheduleFixedRoutes); // Use fixed version
+app.use('/api/schedule-old', scheduleRoutes); // Keep old for backup
+app.use('/api/schedule-v2', scheduleV2Routes);
+app.use('/api/schedule-new', scheduleNewRoutes); // Keep new for reference
 app.use('/api/rooms', roomRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/announcements', announcementRoutes);
+app.use('/api/materials', materialRoutes);
 
 // Socket.IO for real-time updates
 io.on('connection', (socket) => {
@@ -146,9 +181,70 @@ app.use('*', (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 
-server.listen(PORT, () => {
+// Test database connection before starting server
+const testDatabaseConnection = async () => {
+  try {
+    console.log('🔍 Testing database connection...');
+    const { default: pool } = await import('./config/database.js');
+    
+    const result = await pool.query('SELECT NOW() as current_time, version() as db_version');
+    console.log('✅ Database connected successfully:', {
+      time: result.rows[0].current_time,
+      version: result.rows[0].db_version.split(' ')[0]
+    });
+    
+    // Test if users table exists and has data
+    const userCount = await pool.query('SELECT COUNT(*) as count FROM users');
+    console.log(`👥 Users in database: ${userCount.rows[0].count}`);
+    
+    // Show sample users for debugging
+    const sampleUsers = await pool.query('SELECT id, name, email, role FROM users LIMIT 3');
+    console.log('📋 Sample users:', sampleUsers.rows);
+    
+    return true;
+  } catch (error) {
+    console.error('❌ Database connection failed:', {
+      message: error.message,
+      code: error.code,
+      detail: error.detail
+    });
+    
+    if (error.code === 'ECONNREFUSED') {
+      console.error('💡 Suggestion: Make sure PostgreSQL is running and check your .env file');
+    } else if (error.code === '3D000') {
+      console.error('💡 Suggestion: Database does not exist. Run migrations first.');
+    } else if (error.code === '42P01') {
+      console.error('💡 Suggestion: Tables do not exist. Run migrations and seeding.');
+    }
+    
+    return false;
+  }
+};
+
+server.listen(PORT, async () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📡 Socket.IO enabled for real-time updates`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:5173'}`);
+  
+  // Test database connection
+  const dbConnected = await testDatabaseConnection();
+  if (!dbConnected) {
+    console.warn('⚠️  Server started but database connection failed. Authentication will not work.');
+  }
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  server.close(() => {
+    console.log('Process terminated');
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully');
+  server.close(() => {
+    console.log('Process terminated');
+  });
 });

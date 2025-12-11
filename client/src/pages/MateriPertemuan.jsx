@@ -1,71 +1,105 @@
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { FiFile, FiUpload, FiTrash2, FiEdit2, FiDownload } from "react-icons/fi";
 import { useAuth } from "../context/AuthContext";
+import apiService from "../services/api";
 
 const MateriPertemuan = () => {
-    const { id } = useParams();
-    const { user } = useAuth(); // ⬅ ambil user (dosen/mahasiswa)
+    const { id, pertemuan } = useParams();
+    const navigate = useNavigate();
+    const { user } = useAuth();
 
-    const [materialData, setMaterialData] = useState({});
-    const [selectedMeeting, setSelectedMeeting] = useState(null);
+    const [materials, setMaterials] = useState([]);
+    const [selectedMeeting, setSelectedMeeting] = useState(pertemuan ? parseInt(pertemuan.split('-')[1]) : null);
     const [editTitle, setEditTitle] = useState("");
     const [showEdit, setShowEdit] = useState(false);
+    const [loading, setLoading] = useState(false);
+    const [uploadFile, setUploadFile] = useState(null);
+    const [deleteConfirm, setDeleteConfirm] = useState(null);
 
     const MEETINGS_TOTAL = 16;
 
+    // Update selectedMeeting when URL parameter changes
     useEffect(() => {
-        const stored = JSON.parse(localStorage.getItem(`materi-${id}`)) || {};
-        setMaterialData(stored);
-    }, [id]);
+        if (pertemuan) {
+            const meetingNumber = parseInt(pertemuan.split('-')[1]);
+            setSelectedMeeting(meetingNumber);
+        }
+    }, [pertemuan]);
 
-    const saveToStorage = (data) => {
-        localStorage.setItem(`materi-${id}`, JSON.stringify(data));
+    useEffect(() => {
+        if (selectedMeeting) {
+            loadMaterials();
+        }
+    }, [selectedMeeting, id]);
+
+    const loadMaterials = async () => {
+        try {
+            setLoading(true);
+            const response = await apiService.getMaterials(id, selectedMeeting);
+            setMaterials(response.materials || []);
+        } catch (error) {
+            console.error('Error loading materials:', error);
+        } finally {
+            setLoading(false);
+        }
     };
 
-    const uploadPDF = (e) => {
-        if (user?.role !== "dosen") return; // ⬅ mahasiswa tidak boleh upload
+    const uploadPDF = async () => {
+        if (user?.role !== "Komting" || !uploadFile) return;
 
-        const file = e.target.files?.[0];
-        if (!file) return;
+        try {
+            setLoading(true);
+            const formData = new FormData();
+            formData.append('material', uploadFile);
+            formData.append('title', editTitle || uploadFile.name);
 
-        const url = URL.createObjectURL(file);
-
-        const updated = {
-            ...materialData,
-            [selectedMeeting]: {
-                ...materialData[selectedMeeting],
-                file: url,
-                title: editTitle || `Materi Pertemuan ${selectedMeeting}`,
-            }
-        };
-
-        setMaterialData(updated);
-        saveToStorage(updated);
+            await apiService.uploadMaterial(id, selectedMeeting, formData);
+            setUploadFile(null);
+            setEditTitle("");
+            await loadMaterials();
+        } catch (error) {
+            console.error('Error uploading material:', error);
+            alert('Gagal upload materi: ' + error.message);
+        } finally {
+            setLoading(false);
+        }
     };
 
-    const deleteMaterial = (pertemuan) => {
-        if (user?.role !== "dosen") return; // ⬅ mahasiswa tidak boleh hapus
-
-        const updated = { ...materialData };
-        delete updated[pertemuan];
-        setMaterialData(updated);
-        saveToStorage(updated);
+    const deleteMaterial = async (fileId, fileName) => {
+        if (user?.role !== "Komting") return;
+        setDeleteConfirm({ fileId, fileName });
     };
 
-    const saveEdit = () => {
-        if (user?.role !== "dosen") return; // ⬅ mahasiswa tidak boleh edit
+    const confirmDelete = async () => {
+        try {
+            setLoading(true);
+            await apiService.deleteMaterial(id, selectedMeeting, deleteConfirm.fileId);
+            await loadMaterials();
+            setDeleteConfirm(null);
+        } catch (error) {
+            console.error('Error deleting material:', error);
+            alert('Gagal hapus materi: ' + error.message);
+        } finally {
+            setLoading(false);
+        }
+    };
 
-        const updated = {
-            ...materialData,
-            [selectedMeeting]: {
-                ...materialData[selectedMeeting],
-                title: editTitle,
-            }
-        };
-        setMaterialData(updated);
-        saveToStorage(updated);
-        setShowEdit(false);
+    const downloadMaterial = async (fileId, filename) => {
+        try {
+            const blob = await apiService.downloadMaterial(id, selectedMeeting, fileId);
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        } catch (error) {
+            console.error('Error downloading material:', error);
+            alert('Gagal download materi');
+        }
     };
 
     return (
@@ -88,8 +122,7 @@ const MateriPertemuan = () => {
                                 <button
                                     key={i}
                                     onClick={() => {
-                                        setSelectedMeeting(pertemuan);
-                                        setEditTitle(materialData[pertemuan]?.title || "");
+                                        navigate(`/Materi/${id}/pertemuan-${pertemuan}`);
                                     }}
                                     className={`w-full p-3 text-left rounded-lg border ${
                                         selectedMeeting === pertemuan
@@ -117,82 +150,125 @@ const MateriPertemuan = () => {
                                     Pertemuan {selectedMeeting}
                                 </h2>
 
-                                {/* Hanya dosen yang bisa upload */}
-                                {user?.role === "dosen" && (
-                                    <label className="px-4 py-2 bg-blue-600 text-white rounded-lg cursor-pointer flex items-center gap-2">
-                                        <FiUpload />
-                                        Upload PDF
-                                        <input type="file" accept="application/pdf" onChange={uploadPDF} className="hidden" />
-                                    </label>
+                                {/* Upload info for non-Komting users */}
+                                {user?.role !== "Komting" && (
+                                    <div className="text-sm text-gray-500 bg-gray-50 p-3 rounded-lg">
+                                        <FiUpload className="inline mr-2" />
+                                        Hanya Komting yang dapat mengupload materi
+                                    </div>
                                 )}
                             </div>
 
-                            {/* Jika materi ada */}
-                            {materialData[selectedMeeting]?.file ? (
-                                <div className="bg-blue-50 p-4 rounded-lg border mb-4">
-                                    <a
-                                        href={materialData[selectedMeeting].file}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="flex items-center gap-3 text-blue-700 font-semibold hover:underline"
-                                    >
-                                        <FiFile size={24} />
-                                        {materialData[selectedMeeting].title || "Materi PDF"}
-                                    </a>
-
-                                    {/* Tombol download untuk mahasiswa & dosen */}
-                                    <a
-                                        href={materialData[selectedMeeting].file}
-                                        download={`Materi-Pertemuan-${selectedMeeting}.pdf`}
-                                        className="mt-3 inline-flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg"
-                                    >
-                                        <FiDownload /> Download
-                                    </a>
+                            {/* Materials List */}
+                            {loading ? (
+                                <div className="text-center py-4">
+                                    <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+                                    <p className="text-gray-500 mt-2">Memuat materi...</p>
+                                </div>
+                            ) : materials.length > 0 ? (
+                                <div className="space-y-3">
+                                    {materials.map((material) => (
+                                        <div key={material.id} className="bg-blue-50 p-4 rounded-lg border">
+                                            <div className="flex items-center gap-3 mb-2">
+                                                <FiFile size={24} className="text-blue-700" />
+                                                <div className="flex-1">
+                                                    <h4 className="font-semibold text-blue-700">{material.title || material.originalName}</h4>
+                                                    <p className="text-xs text-gray-500">
+                                                        {new Date(material.uploadedAt).toLocaleDateString('id-ID')} • 
+                                                        {(material.size / 1024 / 1024).toFixed(2)} MB
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <button
+                                                    onClick={() => downloadMaterial(material.id, material.originalName)}
+                                                    className="inline-flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                                                >
+                                                    <FiDownload /> Download
+                                                </button>
+                                                {user?.role === "Komting" && (
+                                                    <button
+                                                        onClick={() => deleteMaterial(material.id, material.originalName)}
+                                                        className="inline-flex items-center gap-2 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+                                                    >
+                                                        <FiTrash2 /> Hapus
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
                                 </div>
                             ) : (
-                                <p className="text-gray-500">Belum ada file PDF.</p>
+                                <p className="text-gray-500">Belum ada materi untuk pertemuan ini.</p>
                             )}
 
-                            {/* Edit Judul (Hanya Dosen) */}
-                            {user?.role === "dosen" && (
-                                <>
-                                    <button
-                                        onClick={() => setShowEdit(!showEdit)}
-                                        className="mt-3 mb-2 px-3 py-2 bg-yellow-500 text-white rounded flex items-center gap-2"
-                                    >
-                                        <FiEdit2 /> Edit Judul
-                                    </button>
-
-                                    {showEdit && (
-                                        <div className="mt-2">
-                                            <input
-                                                className="w-full p-2 border rounded"
-                                                value={editTitle}
-                                                onChange={(e) => setEditTitle(e.target.value)}
-                                                placeholder="Judul materi..."
-                                            />
-                                            <button
-                                                onClick={saveEdit}
-                                                className="mt-2 px-4 py-2 bg-green-600 text-white rounded"
-                                            >
-                                                Simpan
-                                            </button>
-                                        </div>
-                                    )}
-
-                                    {/* Hapus Materi */}
-                                    <button
-                                        onClick={() => deleteMaterial(selectedMeeting)}
-                                        className="mt-6 px-4 py-2 bg-red-600 text-white rounded flex items-center gap-2"
-                                    >
-                                        <FiTrash2 /> Hapus Materi
-                                    </button>
-                                </>
+                            {/* Upload Form (Hanya Komting) */}
+                            {user?.role === "Komting" && (
+                                <div className="mt-6 p-4 bg-gray-50 rounded-lg">
+                                    <h4 className="font-medium mb-3">Upload Materi Baru</h4>
+                                    <div className="space-y-3">
+                                        <input
+                                            type="file"
+                                            accept=".pdf,.doc,.docx,.ppt,.pptx,.txt"
+                                            onChange={(e) => setUploadFile(e.target.files[0])}
+                                            className="w-full p-2 border rounded"
+                                        />
+                                        <input
+                                            type="text"
+                                            placeholder="Judul materi (opsional)"
+                                            value={editTitle}
+                                            onChange={(e) => setEditTitle(e.target.value)}
+                                            className="w-full p-2 border rounded"
+                                        />
+                                        <button
+                                            onClick={uploadPDF}
+                                            disabled={!uploadFile || loading}
+                                            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
+                                        >
+                                            <FiUpload /> {loading ? 'Uploading...' : 'Upload Materi'}
+                                        </button>
+                                    </div>
+                                </div>
                             )}
                         </>
                     )}
                 </div>
             </div>
+
+            {/* Delete Confirmation Modal */}
+            {deleteConfirm && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-xl p-6 max-w-md w-full shadow-2xl">
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center">
+                                <FiTrash2 className="text-red-600 text-xl" />
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-semibold text-gray-900">Hapus Materi</h3>
+                                <p className="text-sm text-gray-500">Tindakan ini tidak dapat dibatalkan</p>
+                            </div>
+                        </div>
+                        <p className="text-gray-700 mb-6">
+                            Yakin ingin menghapus materi <span className="font-medium">"{deleteConfirm.fileName}"</span>?
+                        </p>
+                        <div className="flex gap-3">
+                            <button
+                                onClick={() => setDeleteConfirm(null)}
+                                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                            >
+                                Batal
+                            </button>
+                            <button
+                                onClick={confirmDelete}
+                                disabled={loading}
+                                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+                            >
+                                {loading ? 'Menghapus...' : 'Hapus'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

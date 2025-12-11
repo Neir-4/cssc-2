@@ -1,32 +1,10 @@
 import express from 'express';
-import Joi from 'joi';
-import jwt from 'jsonwebtoken';
 import pool from '../config/database.js';
+import { authenticate, requireKomting, validate, logActivity } from '../middleware/index.js';
 
 const router = express.Router();
 
-// Middleware to verify JWT token
-const authenticateToken = (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
-  
-  if (!token) {
-    return res.status(401).json({
-      error: 'No token provided',
-      details: 'Authorization token is required'
-    });
-  }
 
-  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-    if (err) {
-      return res.status(401).json({
-        error: 'Invalid token',
-        details: 'Token is invalid or expired'
-      });
-    }
-    req.user = decoded;
-    next();
-  });
-};
 
 // Get all rooms
 router.get('/', async (req, res) => {
@@ -35,16 +13,16 @@ router.get('/', async (req, res) => {
     const offset = (page - 1) * limit;
 
     const result = await pool.query(`
-      SELECT r.id, r.name, r.capacity, r.floor, r.building, r.description, r.is_active,
-             r.created_at, r.updated_at
-      FROM rooms r
-      WHERE r.is_active = true
-      ORDER BY r.name
+      SELECT c.id, c.room_number as name, c.capacity, c.facilities as description,
+             b.building_name as building, b.id as building_id
+      FROM classrooms c
+      LEFT JOIN buildings b ON c.building_id = b.id
+      ORDER BY c.room_number
       LIMIT $1 OFFSET $2
     `, [limit, offset]);
 
     // Get total count
-    const countResult = await pool.query('SELECT COUNT(*) as total FROM rooms WHERE is_active = true');
+    const countResult = await pool.query('SELECT COUNT(*) as total FROM classrooms');
     const total = parseInt(countResult.rows[0].total);
 
     res.json({
@@ -66,22 +44,112 @@ router.get('/', async (req, res) => {
   }
 });
 
+// Get available rooms for specific date and time range (FIXED LOGIC)
+router.get('/available', async (req, res) => {
+  try {
+    const { date, start_time, end_time, min_capacity } = req.query;
+
+    if (!date || !start_time || !end_time) {
+      return res.status(400).json({
+        error: 'Missing parameters',
+        details: 'date, start_time, and end_time parameters are required'
+      });
+    }
+
+    console.log('🔍 Checking room availability:', { date, start_time, end_time });
+
+    // Get all rooms first
+    const allRoomsQuery = `
+      SELECT c.id, c.room_number as name, c.capacity, c.facilities as description,
+             b.building_name as building
+      FROM classrooms c
+      LEFT JOIN buildings b ON c.building_id = b.id
+      WHERE ($1::integer IS NULL OR c.capacity >= $1::integer)
+      ORDER BY c.room_number
+    `;
+    
+    const allRooms = await pool.query(allRoomsQuery, [min_capacity || null]);
+    
+    // Check each room individually for conflicts
+    const availableRooms = [];
+    const occupiedRooms = [];
+    
+    for (const room of allRooms.rows) {
+      // Check if this specific room has conflicts
+      const conflictQuery = `
+        SELECT cs.id, c.course_name, cs.start_time, cs.end_time
+        FROM class_schedules cs
+        JOIN courses c ON cs.course_id = c.id
+        WHERE cs.room_id = $1
+        AND cs.day_of_week = EXTRACT(DOW FROM $2::date)
+        AND cs.start_time < $4::time 
+        AND cs.end_time > $3::time
+        
+        UNION ALL
+        
+        SELECT se.id, c.course_name, se.start_time, se.end_time
+        FROM schedule_events se
+        JOIN courses c ON se.course_id = c.id
+        WHERE se.room_id = $1
+        AND se.event_date = $2::date
+        AND se.status NOT IN ('cancelled', 'replaced')
+        AND se.start_time < $4::time 
+        AND se.end_time > $3::time
+      `;
+      
+      const conflicts = await pool.query(conflictQuery, [room.id, date, start_time, end_time]);
+      
+      if (conflicts.rows.length === 0) {
+        availableRooms.push({
+          ...room,
+          is_available: true
+        });
+      } else {
+        occupiedRooms.push({
+          ...room,
+          is_available: false,
+          conflict_reason: `Occupied by ${conflicts.rows[0].course_name} (${conflicts.rows[0].start_time}-${conflicts.rows[0].end_time})`
+        });
+      }
+    }
+
+    console.log(`📊 Room availability: ${availableRooms.length} available, ${occupiedRooms.length} occupied`);
+
+    res.json({
+      date,
+      time_range: { start_time, end_time },
+      available_rooms: availableRooms,
+      occupied_rooms: occupiedRooms,
+      total_available: availableRooms.length,
+      total_occupied: occupiedRooms.length
+    });
+
+  } catch (error) {
+    console.error('Get available rooms error:', error);
+    res.status(500).json({
+      error: 'Failed to get available rooms',
+      details: error.message
+    });
+  }
+});
+
 // Get room by ID
 router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
     const result = await pool.query(`
-      SELECT r.id, r.name, r.capacity, r.floor, r.building, r.description, r.is_active,
-             r.created_at, r.updated_at
-      FROM rooms r
-      WHERE r.id = $1 AND r.is_active = true
+      SELECT c.id, c.room_number as name, c.capacity, c.facilities as description,
+             b.building_name as building, b.id as building_id
+      FROM classrooms c
+      LEFT JOIN buildings b ON c.building_id = b.id
+      WHERE c.id = $1
     `, [id]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({
         error: 'Room not found',
-        details: 'Room does not exist or is inactive'
+        details: 'Room does not exist'
       });
     }
 
@@ -128,24 +196,22 @@ router.get('/status', async (req, res) => {
 
     // Get all rooms with their current status
     const roomsResult = await pool.query(`
-      SELECT r.id, r.name, r.capacity, r.floor, r.building, r.description,
+      SELECT c.id, c.room_number as name, c.capacity, c.facilities as description,
+             b.building_name as building,
              CASE 
-               WHEN se.id IS NOT NULL AND se.status != 'cancelled' THEN 'occupied'
+               WHEN cs.id IS NOT NULL THEN 'occupied'
                ELSE 'available'
              END as status,
-             se.course_id, c.course_code, c.name as course_name,
-             se.start_time, se.end_time,
-             l.name as lecturer_name
-      FROM rooms r
-      LEFT JOIN schedule_events se ON r.id = se.room_id 
-        AND se.event_date = $1 
-        AND se.status != 'cancelled'
-        AND se.start_time <= $2 
-        AND se.end_time > $2
-      LEFT JOIN courses c ON se.course_id = c.id
-      LEFT JOIN users l ON c.lecturer_id = l.id
-      WHERE r.is_active = true
-      ORDER BY r.name
+             cs.course_id, co.course_code, co.course_name,
+             cs.start_time, cs.end_time, cs.lecturer_name
+      FROM classrooms c
+      LEFT JOIN buildings b ON c.building_id = b.id
+      LEFT JOIN class_schedules cs ON c.id = cs.room_id 
+        AND cs.day_of_week = EXTRACT(DOW FROM $1::date)
+        AND cs.start_time <= $2::time 
+        AND cs.end_time > $2::time
+      LEFT JOIN courses co ON cs.course_id = co.id
+      ORDER BY c.room_number
     `, [date, time]);
 
     const rooms = roomsResult.rows.map(room => ({
@@ -186,95 +252,80 @@ router.get('/status', async (req, res) => {
   }
 });
 
-// Get available rooms for specific date and time range
-router.get('/free-slots', async (req, res) => {
+
+
+// Get room schedule for a specific date
+// Get daily schedule with room availability
+router.get('/daily-schedule', authenticate, async (req, res) => {
   try {
-    const { date, start_time, end_time, min_capacity } = req.query;
-
-    if (!date || !start_time || !end_time) {
-      return res.status(400).json({
-        error: 'Missing parameters',
-        details: 'date, start_time, and end_time parameters are required'
-      });
-    }
-
-    // Validate date format
-    const dateObj = new Date(date);
-    if (isNaN(dateObj.getTime())) {
-      return res.status(400).json({
-        error: 'Invalid date format',
-        details: 'Date must be in YYYY-MM-DD format'
-      });
-    }
-
-    // Validate time format
-    const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
-    if (!timeRegex.test(start_time) || !timeRegex.test(end_time)) {
-      return res.status(400).json({
-        error: 'Invalid time format',
-        details: 'Time must be in HH:MM format (24-hour)'
-      });
-    }
-
-    // Validate time range
-    const start = new Date(`2000-01-01 ${start_time}`);
-    const end = new Date(`2000-01-01 ${end_time}`);
+    const { date, duration_minutes = 150 } = req.query;
     
-    if (start >= end) {
+    if (!date) {
       return res.status(400).json({
-        error: 'Invalid time range',
-        details: 'Start time must be before end time'
+        error: 'Missing parameter',
+        details: 'date parameter is required'
       });
     }
 
-    // Build query with optional capacity filter
-    let query = `
-      SELECT r.id, r.name, r.capacity, r.floor, r.building, r.description
-      FROM rooms r
-      WHERE r.is_active = true
-      AND r.id NOT IN (
-        SELECT DISTINCT se.room_id
-        FROM schedule_events se
-        WHERE se.event_date = $1
-        AND se.status != 'cancelled'
-        AND (
-          (se.start_time <= $2 AND se.end_time > $2) OR
-          (se.start_time < $3 AND se.end_time >= $3) OR
-          (se.start_time >= $2 AND se.end_time <= $3)
-        )
-      )
-    `;
-    
-    let queryParams = [date, start_time, end_time];
-
-    if (min_capacity) {
-      query += ` AND r.capacity >= $${queryParams.length + 1}`;
-      queryParams.push(parseInt(min_capacity));
+    // Get all time slots for the day (7:00 - 18:00)
+    const timeSlots = [];
+    for (let hour = 7; hour <= 17; hour++) {
+      for (let minute = 0; minute < 60; minute += 30) {
+        const startTime = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+        const endHour = hour + Math.floor((minute + parseInt(duration_minutes)) / 60);
+        const endMinute = (minute + parseInt(duration_minutes)) % 60;
+        const endTime = `${endHour.toString().padStart(2, '0')}:${endMinute.toString().padStart(2, '0')}`;
+        
+        if (endHour <= 18) {
+          timeSlots.push({ start_time: startTime, end_time: endTime });
+        }
+      }
     }
 
-    query += ` ORDER BY r.capacity DESC, r.name`;
+    // For each time slot, get available rooms
+    const scheduleData = [];
+    for (const slot of timeSlots) {
+      const roomsResult = await pool.query(`
+        SELECT cl.id, cl.room_number as name, cl.capacity, cl.facilities,
+               b.building_name as building,
+               CASE WHEN cs.room_id IS NULL THEN true ELSE false END as is_available,
+               c.course_code, c.course_name, cs.lecturer_name
+        FROM classrooms cl
+        LEFT JOIN buildings b ON cl.building_id = b.id
+        LEFT JOIN class_schedules cs ON cl.id = cs.room_id 
+          AND cs.day_of_week = EXTRACT(DOW FROM $1::date)
+          AND cs.start_time < $3 AND cs.end_time > $2
+        LEFT JOIN courses c ON cs.course_id = c.id
+        ORDER BY cl.room_number
+      `, [date, slot.start_time, slot.end_time]);
 
-    const result = await pool.query(query, queryParams);
+      const availableRooms = roomsResult.rows.filter(r => r.is_available);
+      
+      scheduleData.push({
+        time_slot: slot,
+        available_rooms: availableRooms,
+        total_available: availableRooms.length,
+        occupied_rooms: roomsResult.rows.filter(r => !r.is_available)
+      });
+    }
 
     res.json({
       date,
-      time_range: { start_time, end_time },
-      available_rooms: result.rows,
-      total_available: result.rows.length
+      duration_minutes: parseInt(duration_minutes),
+      schedule: scheduleData
     });
 
   } catch (error) {
-    console.error('Get free slots error:', error);
+    console.error('Get daily schedule error:', error);
     res.status(500).json({
-      error: 'Failed to get available rooms',
+      error: 'Failed to get daily schedule',
       details: error.message
     });
   }
 });
 
-// Get room schedule for a specific date
 // Find available rooms for rescheduling
-router.get('/available-for-reschedule', authenticateToken, async (req, res) => {
+router.get('/available-for-reschedule', authenticate, async (req, res) => {
     console.log('Available for reschedule request:', req.query);
     try {
         const { 
@@ -318,10 +369,11 @@ router.get('/available-for-reschedule', authenticateToken, async (req, res) => {
         let roomsResult;
         try {
             roomsResult = await pool.query(`
-                SELECT id, name, capacity, building, floor
-                FROM rooms
-                WHERE is_active = true
-                ORDER BY building, name
+                SELECT c.id, c.room_number as name, c.capacity, 
+                       b.building_name as building, b.id as building_id
+                FROM classrooms c
+                LEFT JOIN buildings b ON c.building_id = b.id
+                ORDER BY b.building_name, c.room_number
             `);
             console.log(`Found ${roomsResult.rows.length} active rooms`);
             
@@ -348,17 +400,15 @@ router.get('/available-for-reschedule', authenticateToken, async (req, res) => {
             try {
                 eventsResult = await pool.query(`
                     SELECT 
-                        se.event_date, 
-                        se.start_time, 
-                        se.end_time,
-                        c.name as course_name
-                    FROM schedule_events se
-                    LEFT JOIN courses c ON se.course_id = c.id
-                    WHERE se.room_id = $1
-                    AND se.event_date BETWEEN $2::date AND $3::date
-                    AND se.status = 'scheduled'
-                    ORDER BY se.event_date, se.start_time
-                `, [room.id, from_date, to_date]);
+                        cs.day_of_week,
+                        cs.start_time, 
+                        cs.end_time,
+                        c.course_name
+                    FROM class_schedules cs
+                    LEFT JOIN courses c ON cs.course_id = c.id
+                    WHERE cs.room_id = $1
+                    ORDER BY cs.day_of_week, cs.start_time
+                `, [room.id]);
                 console.log(`Found ${eventsResult.rows.length} scheduled events for room ${room.id}`);
             } catch (eventError) {
                 console.error(`Error fetching events for room ${room.id}:`, eventError);
@@ -403,13 +453,21 @@ router.get('/available-for-reschedule', authenticateToken, async (req, res) => {
                             continue;
                         }
 
-                        // Check for conflicts
+                        // Check for conflicts with weekly schedule
                         const hasConflict = bookedSlots.some(event => {
-                            const eventStart = new Date(`${event.event_date}T${event.start_time}`);
-                            const eventEnd = new Date(`${event.event_date}T${event.end_time}`);
+                            // Convert day_of_week (1=Monday, 7=Sunday) to JS day (0=Sunday, 6=Saturday)
+                            const eventDayOfWeek = event.day_of_week === 7 ? 0 : event.day_of_week;
                             
-                            return (startTime < eventEnd && endTime > eventStart) && 
-                                   (event.event_date === currentDate);
+                            if (dayOfWeek !== eventDayOfWeek) {
+                                return false;
+                            }
+                            
+                            const eventStart = new Date(`2000-01-01T${event.start_time}`);
+                            const eventEnd = new Date(`2000-01-01T${event.end_time}`);
+                            const slotStart = new Date(`2000-01-01T${startTime.getHours().toString().padStart(2, '0')}:${startTime.getMinutes().toString().padStart(2, '0')}`);
+                            const slotEnd = new Date(`2000-01-01T${endTime.getHours().toString().padStart(2, '0')}:${endTime.getMinutes().toString().padStart(2, '0')}`);
+                            
+                            return (slotStart < eventEnd && slotEnd > eventStart);
                         });
 
                         if (!hasConflict) {
@@ -417,7 +475,7 @@ router.get('/available-for-reschedule', authenticateToken, async (req, res) => {
                                 room_id: room.id,
                                 room_name: room.name,
                                 building: room.building,
-                                floor: room.floor,
+                                building_id: room.building_id,
                                 date: currentDate,
                                 start_time: `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`,
                                 end_time: `${endTime.getHours().toString().padStart(2, '0')}:${endTime.getMinutes().toString().padStart(2, '0')}`,
@@ -447,7 +505,7 @@ router.get('/available-for-reschedule', authenticateToken, async (req, res) => {
                 room_id: slot.room_id,
                 room_name: slot.room_name,
                 building: slot.building,
-                floor: slot.floor
+                building_id: slot.building_id
             });
             return acc;
         }, {});
@@ -508,7 +566,7 @@ router.get('/:id/schedule', async (req, res) => {
 
     // Check if room exists
     const roomResult = await pool.query(
-      'SELECT id, name, capacity, floor, building, description FROM rooms WHERE id = $1 AND is_active = true',
+      'SELECT c.id, c.room_number as name, c.capacity, c.facilities as description, b.building_name as building FROM classrooms c LEFT JOIN buildings b ON c.building_id = b.id WHERE c.id = $1',
       [id]
     );
 
@@ -523,19 +581,14 @@ router.get('/:id/schedule', async (req, res) => {
 
     // Get room schedule for the date
     const scheduleResult = await pool.query(`
-      SELECT se.id, se.start_time, se.end_time, se.status, se.change_reason,
-             c.id as course_id, c.course_code, c.name as course_name,
-             l.name as lecturer_name, k.name as komting_name,
-             u.name as changed_by_name, se.created_at
-      FROM schedule_events se
-      JOIN courses c ON se.course_id = c.id
-      LEFT JOIN users l ON c.lecturer_id = l.id
-      LEFT JOIN users k ON c.komting_id = k.id
-      LEFT JOIN users u ON se.changed_by = u.id
-      WHERE se.room_id = $1 
-      AND se.event_date = $2
-      AND se.status != 'cancelled'
-      ORDER BY se.start_time
+      SELECT cs.id, cs.start_time, cs.end_time, cs.day_of_week,
+             c.id as course_id, c.course_code, c.course_name,
+             cs.lecturer_name, cs.created_at
+      FROM class_schedules cs
+      JOIN courses c ON cs.course_id = c.id
+      WHERE cs.room_id = $1 
+      AND cs.day_of_week = EXTRACT(DOW FROM $2::date)
+      ORDER BY cs.start_time
     `, [id, date]);
 
     const events = scheduleResult.rows.map(event => ({
@@ -546,13 +599,10 @@ router.get('/:id/schedule', async (req, res) => {
         name: event.course_name
       },
       lecturer_name: event.lecturer_name,
-      komting_name: event.komting_name,
       time: `${event.start_time} - ${event.end_time}`,
       start_time: event.start_time,
       end_time: event.end_time,
-      status: event.status,
-      change_reason: event.change_reason,
-      changed_by_name: event.changed_by_name,
+      day_of_week: event.day_of_week,
       created_at: event.created_at
     }));
 
@@ -573,37 +623,13 @@ router.get('/:id/schedule', async (req, res) => {
 });
 
 // Create new room (komting only)
-router.post('/', authenticateToken, async (req, res) => {
+router.post('/', authenticate, requireKomting, logActivity('ROOM_CREATE'), async (req, res) => {
   try {
-    // Only komting can create rooms
-    if (req.user.role !== 'komting') {
-      return res.status(403).json({
-        error: 'Access denied',
-        details: 'Only komting can create rooms'
-      });
-    }
-
-    const roomSchema = Joi.object({
-      name: Joi.string().min(2).max(100).required(),
-      capacity: Joi.number().integer().min(1).optional(),
-      floor: Joi.string().max(50).optional(),
-      building: Joi.string().max(50).optional(),
-      description: Joi.string().optional()
-    });
-
-    const { error, value } = roomSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({
-        error: 'Validation Error',
-        details: error.details[0].message
-      });
-    }
-
-    const { name, capacity, floor, building, description } = value;
+    const { name, capacity, floor, building, description } = req.body;
 
     // Check if room name already exists
     const existingRoom = await pool.query(
-      'SELECT id FROM rooms WHERE name = $1',
+      'SELECT id FROM classrooms WHERE LOWER(room_number) = LOWER($1)',
       [name]
     );
 
@@ -616,10 +642,10 @@ router.post('/', authenticateToken, async (req, res) => {
 
     // Create room
     const result = await pool.query(
-      `INSERT INTO rooms (name, capacity, floor, building, description)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, name, capacity, floor, building, description, created_at`,
-      [name, capacity || null, floor || null, building || null, description || null]
+      `INSERT INTO classrooms (room_number, capacity, facilities)
+       VALUES ($1, $2, $3)
+       RETURNING id, room_number as name, capacity, facilities as description`,
+      [name, capacity || null, description || null]
     );
 
     const room = result.rows[0];

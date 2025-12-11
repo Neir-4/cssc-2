@@ -54,26 +54,22 @@ router.get('/', async (req, res) => {
     const offset = (page - 1) * limit;
 
     let query = `
-      SELECT c.id, c.course_code, c.name, c.description, c.default_day, 
-             c.default_start_time, c.default_end_time, c.semester, c.academic_year,
-             l.name as lecturer_name, k.name as komting_name, r.name as room_name,
-             COUNT(cs.course_id) as subscriber_count
+      SELECT c.id, c.course_code, c.course_name as name, c.credits, c.semester,
+             COUNT(DISTINCT ucs.user_id) as subscriber_count
       FROM courses c
-      LEFT JOIN users l ON c.lecturer_id = l.id
-      LEFT JOIN users k ON c.komting_id = k.id
-      LEFT JOIN rooms r ON c.default_room_id = r.id
-      LEFT JOIN course_subscriptions cs ON c.id = cs.course_id
-      WHERE c.is_active = true
+      LEFT JOIN class_schedules cs ON c.id = cs.course_id
+      LEFT JOIN user_class_schedules ucs ON cs.id = ucs.class_schedule_id
+      WHERE 1=1
     `;
     
     const queryParams = [];
     
     if (search) {
-      query += ` AND (c.name ILIKE $${queryParams.length + 1} OR c.course_code ILIKE $${queryParams.length + 1})`;
+      query += ` AND (c.course_name ILIKE $${queryParams.length + 1} OR c.course_code ILIKE $${queryParams.length + 1})`;
       queryParams.push(`%${search}%`);
     }
     
-    query += ` GROUP BY c.id, l.name, k.name, r.name
+    query += ` GROUP BY c.id, c.course_code, c.course_name, c.credits, c.semester
                ORDER BY c.course_code
                LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
     
@@ -82,11 +78,11 @@ router.get('/', async (req, res) => {
     const result = await pool.query(query, queryParams);
 
     // Get total count
-    let countQuery = 'SELECT COUNT(*) as total FROM courses WHERE is_active = true';
+    let countQuery = 'SELECT COUNT(*) as total FROM courses WHERE 1=1';
     const countParams = [];
     
     if (search) {
-      countQuery += ` AND (name ILIKE $1 OR course_code ILIKE $1)`;
+      countQuery += ` AND (course_name ILIKE $1 OR course_code ILIKE $1)`;
       countParams.push(`%${search}%`);
     }
     
@@ -165,10 +161,11 @@ router.get('/:id/details', authenticateToken, async (req, res) => {
     const { id } = req.params;
 
     const result = await pool.query(`
-      SELECT id, course_code, name, description, credits, 
-             lecturer_id, komting_id, default_day, 
-             default_start_time, default_end_time
-      FROM courses WHERE id = $1 AND is_active = true
+      SELECT c.id, c.course_code, c.course_name as name, c.credits,
+             cs.day_of_week, cs.start_time, cs.end_time, cs.lecturer_name
+      FROM courses c
+      LEFT JOIN class_schedules cs ON c.id = cs.course_id
+      WHERE c.id = $1
     `, [id]);
     
     if (result.rows.length === 0) {
@@ -196,23 +193,38 @@ router.post('/subscribe', authenticateToken, async (req, res) => {
     const { course_id } = value;
     const user_id = req.user.id;
 
-    // Check if course exists and is active
+    // Check if course exists
     const courseResult = await pool.query(
-      'SELECT id, name FROM courses WHERE id = $1 AND is_active = true',
+      'SELECT id, course_name FROM courses WHERE id = $1',
       [course_id]
     );
 
     if (courseResult.rows.length === 0) {
       return res.status(404).json({
         error: 'Course not found',
-        details: 'Course does not exist or is inactive'
+        details: 'Course does not exist'
       });
     }
 
+    // Find the class schedule for this course
+    const scheduleResult = await pool.query(
+      'SELECT id FROM class_schedules WHERE course_id = $1 LIMIT 1',
+      [course_id]
+    );
+
+    if (scheduleResult.rows.length === 0) {
+      return res.status(404).json({
+        error: 'No schedule found',
+        details: 'No class schedule found for this course'
+      });
+    }
+
+    const class_schedule_id = scheduleResult.rows[0].id;
+
     // Check if already subscribed
     const existingSubscription = await pool.query(
-      'SELECT user_id, course_id FROM course_subscriptions WHERE user_id = $1 AND course_id = $2',
-      [user_id, course_id]
+      'SELECT user_id, class_schedule_id FROM user_class_schedules WHERE user_id = $1 AND class_schedule_id = $2',
+      [user_id, class_schedule_id]
     );
 
     if (existingSubscription.rows.length > 0) {
@@ -224,8 +236,8 @@ router.post('/subscribe', authenticateToken, async (req, res) => {
 
     // Create subscription
     const result = await pool.query(
-      'INSERT INTO course_subscriptions (user_id, course_id) VALUES ($1, $2) RETURNING user_id, course_id, subscribed_at',
-      [user_id, course_id]
+      'INSERT INTO user_class_schedules (user_id, class_schedule_id) VALUES ($1, $2) RETURNING user_id, class_schedule_id, enrolled_at',
+      [user_id, class_schedule_id]
     );
 
     const course = courseResult.rows[0];
@@ -234,9 +246,9 @@ router.post('/subscribe', authenticateToken, async (req, res) => {
       message: 'Successfully subscribed to course',
       subscription: {
         user_id: result.rows[0].user_id,
-        course_id: result.rows[0].course_id,
-        course_name: course.name,
-        subscribed_at: result.rows[0].subscribed_at
+        course_id: course_id,
+        course_name: course.course_name,
+        subscribed_at: result.rows[0].enrolled_at
       }
     });
 
@@ -263,10 +275,25 @@ router.delete('/unsubscribe', authenticateToken, async (req, res) => {
     const { course_id } = value;
     const user_id = req.user.id;
 
+    // Find the class schedule for this course
+    const scheduleResult = await pool.query(
+      'SELECT id FROM class_schedules WHERE course_id = $1 LIMIT 1',
+      [course_id]
+    );
+
+    if (scheduleResult.rows.length === 0) {
+      return res.status(404).json({
+        error: 'No schedule found',
+        details: 'No class schedule found for this course'
+      });
+    }
+
+    const class_schedule_id = scheduleResult.rows[0].id;
+
     // Check if subscription exists
     const existingSubscription = await pool.query(
-      'SELECT user_id, course_id FROM course_subscriptions WHERE user_id = $1 AND course_id = $2',
-      [user_id, course_id]
+      'SELECT user_id, class_schedule_id FROM user_class_schedules WHERE user_id = $1 AND class_schedule_id = $2',
+      [user_id, class_schedule_id]
     );
 
     if (existingSubscription.rows.length === 0) {
@@ -278,8 +305,8 @@ router.delete('/unsubscribe', authenticateToken, async (req, res) => {
 
     // Delete subscription
     await pool.query(
-      'DELETE FROM course_subscriptions WHERE user_id = $1 AND course_id = $2',
-      [user_id, course_id]
+      'DELETE FROM user_class_schedules WHERE user_id = $1 AND class_schedule_id = $2',
+      [user_id, class_schedule_id]
     );
 
     res.json({
@@ -301,16 +328,16 @@ router.get('/my/subscriptions', authenticateToken, async (req, res) => {
     const user_id = req.user.id;
 
     const result = await pool.query(`
-      SELECT c.id as course_id, c.course_code, c.name, c.description, c.default_day, 
-             c.default_start_time, c.default_end_time, c.semester, c.academic_year,
-             l.name as lecturer_name, k.name as komting_name, r.name as room_name,
-             cs.subscribed_at
-      FROM course_subscriptions cs
+      SELECT c.id as course_id, c.course_code, c.course_name as name, c.credits,
+             cs.day_of_week, cs.start_time, cs.end_time, cs.lecturer_name,
+             cs.semester, cs.academic_year, ucs.enrolled_at as subscribed_at,
+             cl.room_number, b.building_name
+      FROM user_class_schedules ucs
+      JOIN class_schedules cs ON ucs.class_schedule_id = cs.id
       JOIN courses c ON cs.course_id = c.id
-      LEFT JOIN users l ON c.lecturer_id = l.id
-      LEFT JOIN users k ON c.komting_id = k.id
-      LEFT JOIN rooms r ON c.default_room_id = r.id
-      WHERE cs.user_id = $1 AND c.is_active = true
+      LEFT JOIN classrooms cl ON cs.room_id = cl.id
+      LEFT JOIN buildings b ON cl.building_id = b.id
+      WHERE ucs.user_id = $1
       ORDER BY c.course_code
     `, [user_id]);
 
@@ -331,11 +358,11 @@ router.get('/my/subscriptions', authenticateToken, async (req, res) => {
 // Create new course (komting only)
 router.post('/', authenticateToken, async (req, res) => {
   try {
-    // Only komting can create courses
-    if (req.user.role !== 'komting') {
+    // Only admin and komting can create courses
+    if (!['admin', 'komting'].includes(req.user.role)) {
       return res.status(403).json({
         error: 'Access denied',
-        details: 'Only komting can create courses'
+        details: 'Only admin and komting can create courses'
       });
     }
 
@@ -417,19 +444,19 @@ router.get('/schedules/my', authenticateToken, async (req, res) => {
       SELECT 
         cs.id,
         c.id as course_id,
-        c.name as course_name,
+        c.course_name,
         cs.day_of_week,
         cs.start_time,
         cs.end_time,
-        r.name as room_code,
+        cl.room_number as room_code,
         cs.lecturer_name,
         cs.semester,
         cs.academic_year
-      FROM course_subscriptions sub
-      JOIN courses c ON sub.course_id = c.id
-      LEFT JOIN class_schedules cs ON c.id = cs.course_id
-      LEFT JOIN rooms r ON cs.room_id = r.id
-      WHERE sub.user_id = $1
+      FROM user_class_schedules ucs
+      JOIN class_schedules cs ON ucs.class_schedule_id = cs.id
+      JOIN courses c ON cs.course_id = c.id
+      LEFT JOIN classrooms cl ON cs.room_id = cl.id
+      WHERE ucs.user_id = $1
       ORDER BY cs.day_of_week, cs.start_time
     `, [userId]);
     
@@ -454,17 +481,17 @@ router.get('/schedules/all', authenticateToken, async (req, res) => {
       SELECT 
         cs.id,
         c.id as course_id,
-        c.name as course_name,
+        c.course_name,
         cs.day_of_week,
         cs.start_time,
         cs.end_time,
-        r.name as room_code,
+        cl.room_number as room_code,
         cs.lecturer_name,
         cs.semester,
         cs.academic_year
       FROM class_schedules cs
       JOIN courses c ON cs.course_id = c.id
-      LEFT JOIN rooms r ON cs.room_id = r.id
+      LEFT JOIN classrooms cl ON cs.room_id = cl.id
       ORDER BY cs.day_of_week, cs.start_time
     `);
     

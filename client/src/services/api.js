@@ -38,17 +38,44 @@ class ApiService {
       ...options,
     };
 
+    console.log('🔄 API Request:', {
+      url,
+      method: config.method || 'GET',
+      headers: config.headers,
+      body: config.body ? JSON.parse(config.body) : null
+    });
+
     try {
       const response = await fetch(url, config);
+      
+      console.log('📡 API Response:', {
+        status: response.status,
+        statusText: response.statusText,
+        url: response.url
+      });
+
       const data = await response.json();
+      
+      console.log('📦 Response Data:', data);
 
       if (!response.ok) {
+        console.error('❌ API Error Response:', {
+          status: response.status,
+          error: data.error,
+          details: data.details,
+          data
+        });
         throw new Error(data.error || data.details || 'Request failed');
       }
 
       return data;
     } catch (error) {
-      console.error('API Request Error:', error);
+      console.error('💥 API Request Error:', {
+        message: error.message,
+        url,
+        endpoint,
+        error
+      });
       throw error;
     }
   }
@@ -144,12 +171,22 @@ class ApiService {
   }
 
   async getRealSchedule(params = {}) {
+    // Add cache-busting timestamp
+    params._t = Date.now();
     const queryString = new URLSearchParams(params).toString();
     const endpoint = queryString ? `/schedule/real?${queryString}` : '/schedule/real';
     return this.get(endpoint);
   }
 
   async updateSchedule(scheduleData) {
+    // Add week calculation if not provided
+    if (scheduleData.newDate && !scheduleData.weekNumber) {
+      const eventDate = new Date(scheduleData.newDate);
+      const semesterStart = new Date('2024-08-26');
+      const weekNumber = Math.ceil((eventDate - semesterStart) / (7 * 24 * 60 * 60 * 1000));
+      scheduleData.weekNumber = weekNumber;
+    }
+    
     return this.post('/schedule/update', scheduleData);
   }
 
@@ -183,7 +220,7 @@ class ApiService {
       params.append('min_capacity', minCapacity);
     }
     
-    return this.get(`/rooms/free-slots?${params.toString()}`);
+    return this.get(`/rooms/available?${params.toString()}`);
   }
 
   async getRoomSchedule(roomId, date) {
@@ -220,10 +257,6 @@ class ApiService {
     return this.get('/courses/schedules/all');
   }
 
-  async updateSchedule(scheduleData) {
-    return this.post('/schedule/update', scheduleData);
-  }
-
   // Announcements methods
   async getMyAnnouncements() {
     return this.get('/announcements/my');
@@ -246,6 +279,57 @@ class ApiService {
   async findAvailableRooms(params) {
     const queryParams = new URLSearchParams(params).toString();
     return this.request(`/rooms/available-for-reschedule?${queryParams}`);
+  }
+
+  // Materials methods
+  async getMaterials(courseId, meeting) {
+    return this.get(`/materials/${courseId}/${meeting}`);
+  }
+
+  async uploadMaterial(courseId, meeting, formData) {
+    const url = `${this.baseURL}/materials/${courseId}/${meeting}/upload`;
+    const headers = {};
+    if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`;
+    }
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: formData
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Upload failed');
+    }
+    
+    return response.json();
+  }
+
+  async downloadMaterial(courseId, meeting, fileId) {
+    const url = `${this.baseURL}/materials/${courseId}/${meeting}/download/${fileId}`;
+    const headers = {};
+    if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`;
+    }
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers
+    });
+    
+    if (!response.ok) {
+      throw new Error('Download failed');
+    }
+    
+    return response.blob();
+  }
+
+  async deleteMaterial(courseId, meeting, fileId) {
+    return this.request(`/materials/${courseId}/${meeting}/${fileId}`, {
+      method: 'DELETE'
+    });
   }
 
   // Health check

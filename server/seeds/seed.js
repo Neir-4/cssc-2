@@ -28,7 +28,7 @@ async function seedDatabase() {
     console.log('🏫 Rooms created:', roomsResult.rows.map(r => r.name));
     
     // Insert Users
-    const hashedPassword = await bcrypt.hash('password123', 10);
+    const hashedPassword = await bcrypt.hash('admin123', 10);
     
     const usersData = [
       { name: 'Yehezkiel', email: 'yehezkiel@usu.ac.id', role: 'mahasiswa', phone: '+62812345678' },

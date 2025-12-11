@@ -1,224 +1,159 @@
-# CSSC - Sistem Informasi Penjadwalan & Notifikasi Kelas Prodi
+# CSSC - CompScie Smart Class
 
-Sistem penjadwalan kelas untuk Prodi Ilmu Komputer USU dengan fitur real-time updates dan notifikasi.
+A comprehensive scheduling system for Computer Science classes with real-time updates and notifications.
 
-## 🚀 Fitur Utama
+## Project Structure
 
-### User Roles
-- **Mahasiswa**: View jadwal pribadi, subscribe mata kuliah, terima notifikasi
-- **Dosen**: View jadwal default + update versi komting (view only)
-- **Komting**: Update/ganti jadwal, lihat status ruang, kirim notifikasi
+```
+CSSC-main/
+├── client/          # React frontend application
+│   ├── src/         # Source code
+│   ├── public/      # Static assets
+│   └── package.json # Frontend dependencies
+└── server/          # Node.js backend API
+    ├── config/      # Database configuration
+    ├── middleware/  # Express middleware
+    ├── migrations/  # Database migrations
+    ├── routes/      # API routes
+    ├── scripts/     # Utility scripts
+    ├── seeds/       # Database seeding
+    ├── setup/       # Setup and maintenance files
+    ├── debug/       # Debug and testing utilities
+    └── server.js    # Main application entry point
+```
 
-### Core Features
-- ✅ Kalender default tiap mata kuliah
-- ✅ Update jadwal real-time oleh komting
-- ✅ Notifikasi massal (Email & WhatsApp)
-- ✅ Status ruangan real-time (occupied/available)
-- ✅ Validasi bentrok jadwal otomatis
-- ✅ History perubahan jadwal
+## Quick Start
 
-## 📋 Prerequisites
+### Prerequisites
+- Node.js (v16 or higher)
+- PostgreSQL (v12 or higher)
+- npm or yarn
 
-### Backend Requirements
-- Node.js 18+ 
-- PostgreSQL 12+
-- pgAdmin (untuk database management)
+### Backend Setup
 
-### Frontend Requirements
-- Node.js 18+
-- Modern browser (Chrome, Firefox, Safari)
-
-## 🛠️ Setup Instructions
-
-### 1. Database Setup
-
-1. **Buat Database di pgAdmin:**
-   - Buka pgAdmin
-   - Klik kanan pada `Databases` → `Create` → `Database`
-   - Name: `cssc_db`
-   - Save
-
-2. **Update Environment Variables:**
+1. Navigate to server directory:
    ```bash
-   # Di folder server/.env
-   DB_PASSWORD=your_postgresql_password
-   JWT_SECRET=your_long_random_secret_key_here
+   cd server
    ```
 
-### 2. Backend Setup
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
 
-```bash
-# Masuk ke folder server
-cd server
+3. Create environment file:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your database credentials
+   ```
 
-# Install dependencies
-npm install
+4. Run database migrations:
+   ```bash
+   npm run migrate
+   ```
 
-# Run database migrations
-npm run migrate
+5. Seed the database:
+   ```bash
+   npm run seed
+   ```
 
-# Seed database dengan data contoh
-npm run seed
+6. Start the server:
+   ```bash
+   npm start
+   # or for development
+   npm run dev
+   ```
 
-# Start development server
-npm run dev
-```
+### Frontend Setup
 
-Backend akan running di `http://localhost:5000`
+1. Navigate to client directory:
+   ```bash
+   cd client
+   ```
 
-### 3. Frontend Setup
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
 
-```bash
-# Masuk ke folder client (buka terminal baru)
-cd client
+3. Start the development server:
+   ```bash
+   npm run dev
+   ```
 
-# Install dependencies
-npm install
+## Features
 
-# Start development server
-npm run dev
-```
+- **User Authentication**: Secure login system with JWT tokens
+- **Role-based Access**: Different permissions for Admin and Komting
+- **Schedule Management**: Create, update, and manage class schedules
+- **Room Booking**: Check room availability and book classrooms
+- **Real-time Updates**: Live notifications for schedule changes
+- **Course Materials**: Upload and access course materials
+- **Announcements**: Create and view important announcements
+- **Responsive Design**: Works on desktop and mobile devices
 
-Frontend akan running di `http://localhost:5173`
+## API Documentation
 
-## 🧪 Testing Credentials
+The backend provides RESTful APIs for:
 
-Setelah seeding, Anda bisa login dengan:
+- `/api/auth` - Authentication and user management
+- `/api/courses` - Course management and subscriptions
+- `/api/schedule` - Schedule operations and updates
+- `/api/rooms` - Room availability and booking
+- `/api/announcements` - Announcement system
+- `/api/notifications` - Real-time notifications
 
-### Mahasiswa
-- **Email**: `yehezkiel@usu.ac.id`
-- **Password**: `password123`
+## Development
 
-### Dosen
-- **Email**: `syukron@usu.ac.id`
-- **Password**: `password123`
+### Available Scripts (Backend)
 
-### Komting
-- **Email**: `alya@usu.ac.id`
-- **Password**: `password123`
+- `npm start` - Start production server
+- `npm run dev` - Start development server with auto-reload
+- `npm run migrate` - Run database migrations
+- `npm run seed` - Seed database with sample data
+- `npm run debug:db` - Test database connection
+- `npm run setup:phase1` - Initial setup
 
-## 📡 API Endpoints
+### Available Scripts (Frontend)
 
-### Authentication
-- `POST /api/auth/login` - Login user
-- `POST /api/auth/register` - Register user
-- `GET /api/auth/me` - Get current user
-- `PUT /api/auth/profile` - Update profile
+- `npm run dev` - Start development server
+- `npm run build` - Build for production
+- `npm run preview` - Preview production build
 
-### Courses
-- `GET /api/courses` - Get all courses
-- `GET /api/courses/:id` - Get course by ID
-- `POST /api/courses/subscribe` - Subscribe to course
-- `DELETE /api/courses/unsubscribe` - Unsubscribe from course
-- `GET /api/courses/my/subscriptions` - Get user's subscriptions
+## Environment Variables
 
-### Schedule
-- `GET /api/schedule/default` - Get default schedule
-- `GET /api/schedule/real` - Get real schedule events
-- `POST /api/schedule/update` - Update schedule (komting only)
-- `GET /api/schedule/history/:course_id` - Get schedule history
+Create a `.env` file in the server directory:
 
-### Rooms
-- `GET /api/rooms` - Get all rooms
-- `GET /api/rooms/status` - Get room status for specific time
-- `GET /api/rooms/free-slots` - Get available rooms
-- `GET /api/rooms/:id/schedule` - Get room schedule
-
-### Notifications
-- `GET /api/notifications/preferences` - Get notification preferences
-- `POST /api/notifications/schedule-change` - Send schedule change notification
-- `POST /api/notifications/test` - Test notification
-
-## 🗄️ Database Schema
-
-### Tables
-- **users**: User data (mahasiswa, dosen, komting)
-- **rooms**: Room information (Lab 2, Lab 3, D-101, etc.)
-- **courses**: Course data with default schedule
-- **course_subscriptions**: Many-to-many relationship users-courses
-- **schedule_events**: Real-time schedule changes and updates
-- **migrations**: Database migration tracking
-
-## 🔄 Workflow Sistem
-
-1. **Default Schedule Loading**: Sistem load jadwal default dari database
-2. **Schedule Change Request**: Dosen → Komting (outside system)
-3. **Komting Update**: Komting buka dashboard → update jadwal
-4. **Validation**: Backend cek bentrok ruangan
-5. **Notification**: Auto-send ke semua subscribers
-6. **Real-time Update**: Calendar mahasiswa & dosen update otomatis
-
-## 📱 Notifikasi Setup (Optional)
-
-### Email (Gmail SMTP)
 ```env
-EMAIL_HOST=smtp.gmail.com
-EMAIL_PORT=587
-EMAIL_USER=your_email@gmail.com
-EMAIL_PASS=your_app_password_here
+# Database Configuration
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=cssc_db
+DB_USER=postgres
+DB_PASSWORD=your_password
+
+# JWT Configuration
+JWT_SECRET=your_jwt_secret_key
+JWT_EXPIRES_IN=7d
+
+# Server Configuration
+PORT=5000
+NODE_ENV=development
+FRONTEND_URL=http://localhost:5173
+
+# Rate Limiting
+RATE_LIMIT_WINDOW_MS=900000
+RATE_LIMIT_MAX_REQUESTS=100
 ```
 
-### WhatsApp (Twilio)
-```env
-TWILIO_ACCOUNT_SID=your_twilio_sid
-TWILIO_AUTH_TOKEN=your_twilio_token
-TWILIO_WHATSAPP_FROM=whatsapp:+14155238886
-```
+## Contributing
 
-## 🐛 Troubleshooting
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test thoroughly
+5. Submit a pull request
 
-### Common Issues
+## License
 
-1. **Database Connection Error**
-   - Pastikan PostgreSQL running
-   - Check password di .env
-   - Verify database name `cssc_db`
-
-2. **Migration Failed**
-   - Drop dan recreate database
-   - Run `npm run migrate` lagi
-
-3. **Frontend API Error**
-   - Pastikan backend running di port 5000
-   - Check VITE_API_URL di client/.env
-
-4. **Authentication Error**
-   - Check JWT secret di .env
-   - Clear browser localStorage
-
-### Development Tips
-
-- Backend: `npm run dev` untuk auto-restart
-- Frontend: `npm run dev` untuk hot reload
-- Database: Use pgAdmin untuk inspect data
-- API Testing: Use Postman/Insomnia untuk test endpoints
-
-## 🚀 Deployment
-
-### Backend (Production)
-```bash
-npm install --production
-npm start
-```
-
-### Frontend (Build)
-```bash
-npm run build
-# Deploy build/ folder to web server
-```
-
-## 📄 License
-
-MIT License - CSSC Team
-
-## 🤝 Contributing
-
-1. Fork repository
-2. Create feature branch
-3. Commit changes
-4. Push to branch
-5. Create Pull Request
-
----
-
-**Built with ❤️ for Prodi Ilmu Komputer USU**
+This project is licensed under the MIT License.

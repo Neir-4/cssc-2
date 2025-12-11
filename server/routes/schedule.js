@@ -1,77 +1,49 @@
 import express from 'express';
-import Joi from 'joi';
-import jwt from 'jsonwebtoken';
 import pool from '../config/database.js';
+import { 
+  authenticate, 
+  requireKomting, 
+  requireAdminOrKomting,
+  validate,
+  scheduleSchemas,
+  validateTimeRange,
+  validateFutureDate,
+  logActivity
+} from '../middleware/index.js';
+import { validateScheduleDate, validateScheduleTime } from '../middleware/dateValidation.js';
 
 const router = express.Router();
 
-// Middleware to verify JWT token
-const authenticateToken = (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
-  
-  if (!token) {
-    return res.status(401).json({
-      error: 'No token provided',
-      details: 'Authorization token is required'
-    });
-  }
 
-  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-    if (err) {
-      return res.status(401).json({
-        error: 'Invalid token',
-        details: 'Token is invalid or expired'
-      });
-    }
-    req.user = decoded;
-    next();
-  });
-};
-
-// Validation schemas
-const updateScheduleSchema = Joi.object({
-  eventId: Joi.number().integer().optional(),
-  courseId: Joi.number().integer().required(),
-  newDate: Joi.date().iso().required(),
-  newStartTime: Joi.string().pattern(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/).required(),
-  newEndTime: Joi.string().pattern(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/).required(),
-  newRoomId: Joi.number().integer().optional().allow(null),
-  newRoomName: Joi.string().optional()
-});
 
 // Get default schedule for a user
-router.get('/default', authenticateToken, async (req, res) => {
+router.get('/default', authenticate, async (req, res) => {
   try {
     const user_id = req.user.id;
 
     let query = `
-      SELECT c.id, c.course_code, c.name, c.default_day, c.default_start_time, c.default_end_time,
-             l.name as lecturer_name, k.name as komting_name, r.name as room_name, r.capacity,
-             r.floor, r.building
-      FROM courses c
-      LEFT JOIN users l ON c.lecturer_id = l.id
-      LEFT JOIN users k ON c.komting_id = k.id
-      LEFT JOIN rooms r ON c.default_room_id = r.id
-      WHERE c.is_active = true
+      SELECT c.id, c.course_code, c.course_name as name, cs.day_of_week, cs.start_time, cs.end_time,
+             cs.lecturer_name, cl.room_number as room_name, cl.capacity,
+             b.building_name as building
+      FROM class_schedules cs
+      JOIN courses c ON cs.course_id = c.id
+      LEFT JOIN classrooms cl ON cs.room_id = cl.id
+      LEFT JOIN buildings b ON cl.building_id = b.id
+      WHERE 1=1
     `;
     
     let queryParams = [];
 
-    // Filter based on user role
-    if (req.user.role === 'mahasiswa') {
-      query += ` AND c.id IN (
-        SELECT course_id FROM course_subscriptions WHERE user_id = $1
-      )`;
-      queryParams.push(user_id);
-    } else if (req.user.role === 'dosen') {
-      query += ` AND c.lecturer_id = $1`;
-      queryParams.push(user_id);
-    } else if (req.user.role === 'komting') {
-      query += ` AND c.komting_id = $1`;
+    // Filter based on user subscriptions
+    if (req.user.role === 'admin') {
+      // Admin sees all courses - no filter needed
+    } else {
+      // Regular users see only subscribed courses
+      query += ` AND EXISTS (SELECT 1 FROM user_class_schedules ucs WHERE ucs.user_id = $1 AND ucs.class_schedule_id = cs.id)`;
       queryParams.push(user_id);
     }
 
-    query += ` ORDER BY c.default_day, c.default_start_time`;
+    query += ` ORDER BY cs.day_of_week, cs.start_time`;
 
     const result = await pool.query(query, queryParams);
 
@@ -80,7 +52,10 @@ router.get('/default', authenticateToken, async (req, res) => {
     
     const schedule = result.rows.map(course => ({
       ...course,
-      day_name: dayNames[course.default_day - 1] || 'Unknown'
+      default_day: course.day_of_week,
+      default_start_time: course.start_time,
+      default_end_time: course.end_time,
+      day_name: dayNames[course.day_of_week - 1] || 'Unknown'
     }));
 
     res.json({
@@ -98,10 +73,22 @@ router.get('/default', authenticateToken, async (req, res) => {
 });
 
 // Get real schedule (actual events) for a user
-router.get('/real', authenticateToken, async (req, res) => {
+router.get('/real', authenticate, async (req, res) => {
+  // Prevent caching for debugging
+  res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  
   try {
     const user_id = req.user.id;
     const { start_date, end_date } = req.query;
+
+    console.log('🔍 Real schedule request:', {
+      user_id,
+      user_role: req.user.role,
+      start_date,
+      end_date
+    });
 
     // Default to current week if no date range provided
     let startDate = new Date();
@@ -119,77 +106,83 @@ router.get('/real', authenticateToken, async (req, res) => {
       endDate.setDate(startDate.getDate() + 6);
     }
 
+    console.log('📅 Date range:', {
+      startDate: startDate.toISOString().split('T')[0],
+      endDate: endDate.toISOString().split('T')[0]
+    });
+
     let query = `
-      SELECT se.id, se.event_date, se.start_time, se.end_time, se.status, se.change_reason,
-             se.created_at as event_created_at,
-             c.id as course_id, c.course_code, c.name as course_name,
-             l.name as lecturer_name, k.name as komting_name,
-             r.id as room_id, r.name as room_name, r.capacity, r.floor, r.building,
-             u.name as changed_by_name
-      FROM schedule_events se
-      JOIN courses c ON se.course_id = c.id
-      LEFT JOIN users l ON c.lecturer_id = l.id
-      LEFT JOIN users k ON c.komting_id = k.id
-      LEFT JOIN rooms r ON se.room_id = r.id
-      LEFT JOIN users u ON se.changed_by = u.id
-      WHERE se.event_date BETWEEN $1 AND $2
-      AND c.is_active = true
-      AND se.status != 'cancelled'
+      SELECT cs.id, cs.day_of_week, cs.start_time, cs.end_time,
+             c.id as course_id, c.course_code, c.course_name,
+             cs.lecturer_name,
+             cl.id as room_id, cl.room_number as room_name, cl.capacity,
+             b.building_name as building, cs.created_at as event_created_at
+      FROM class_schedules cs
+      JOIN courses c ON cs.course_id = c.id
+      LEFT JOIN classrooms cl ON cs.room_id = cl.id
+      LEFT JOIN buildings b ON cl.building_id = b.id
+      WHERE 1=1
     `;
     
-    let queryParams = [startDate.toISOString().split('T')[0], endDate.toISOString().split('T')[0]];
+    let queryParams = [];
 
-    // Filter based on user role
-    if (req.user.role === 'mahasiswa') {
-      query += ` AND c.id IN (
-        SELECT course_id FROM course_subscriptions WHERE user_id = $3
-      )`;
-      queryParams.push(user_id);
-    } else if (req.user.role === 'dosen') {
-      query += ` AND c.lecturer_id = $3`;
-      queryParams.push(user_id);
-    } else if (req.user.role === 'komting') {
-      query += ` AND c.komting_id = $3`;
+    // Filter based on user subscriptions
+    if (req.user.role === 'admin') {
+      // Admin sees all schedules - no filter needed
+    } else {
+      // Regular users see only subscribed courses
+      query += ` AND EXISTS (SELECT 1 FROM user_class_schedules ucs WHERE ucs.user_id = $1 AND ucs.class_schedule_id = cs.id)`;
       queryParams.push(user_id);
     }
 
-    query += ` ORDER BY se.event_date, se.start_time`;
+    query += ` ORDER BY cs.day_of_week, cs.start_time`;
+
+    console.log('🔍 Query:', query);
+    console.log('🔍 Params:', queryParams);
+    console.log('🔍 User role check - is admin?', req.user.role === 'admin');
 
     const result = await pool.query(query, queryParams);
+    
+    console.log('📊 Query result:', {
+      rowCount: result.rows.length,
+      sampleRows: result.rows.slice(0, 2)
+    });
+    console.log('📊 All courses found:', result.rows.map(r => r.course_name));
 
-    // Group events by date
-    const eventsByDate = {};
+    // Group events by day of week
+    const eventsByDay = {};
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    
     result.rows.forEach(event => {
-      const date = event.event_date;
-      if (!eventsByDate[date]) {
-        eventsByDate[date] = [];
+      const dayKey = event.day_of_week;
+      if (!eventsByDay[dayKey]) {
+        eventsByDay[dayKey] = [];
       }
-      eventsByDate[date].push({
+      eventsByDay[dayKey].push({
         id: event.id,
         course_id: event.course_id,
         course_code: event.course_code,
         course_name: event.course_name,
         lecturer_name: event.lecturer_name,
-        komting_name: event.komting_name,
         room: {
           id: event.room_id,
           name: event.room_name,
           capacity: event.capacity,
-          floor: event.floor,
           building: event.building
         },
         time: `${event.start_time} - ${event.end_time}`,
         start_time: event.start_time,
         end_time: event.end_time,
-        status: event.status,
-        change_reason: event.change_reason,
-        changed_by_name: event.changed_by_name,
+        day_of_week: event.day_of_week,
+        day_name: dayNames[event.day_of_week] || 'Unknown',
         created_at: event.event_created_at
       });
     });
 
+    console.log('📤 Sending response with', result.rows.length, 'events');
+    
     res.json({
-      events: eventsByDate,
+      events: eventsByDay,
       date_range: {
         start_date: startDate.toISOString().split('T')[0],
         end_date: endDate.toISOString().split('T')[0]
@@ -206,148 +199,101 @@ router.get('/real', authenticateToken, async (req, res) => {
   }
 });
 
-// Update schedule (komting only)
-router.post('/update', authenticateToken, async (req, res) => {
+// Update schedule with weekly logic (komting only)
+router.post('/update', 
+  authenticate,
+  requireAdminOrKomting,
+  validateScheduleDate,
+  validateScheduleTime,
+  logActivity('SCHEDULE_UPDATE'),
+  async (req, res) => {
   try {
-    // Only komting can update schedules
-    if (req.user.role !== 'komting') {
-      return res.status(403).json({
-        error: 'Access denied',
-        details: 'Only komting can update schedules'
-      });
-    }
-
-    const { error, value } = updateScheduleSchema.validate(req.body);
-    if (error) {
+    const { courseId, newRoomId, newDate, newStartTime, newEndTime, weekNumber, meetingNumber } = req.body;
+    
+    if (!courseId || !newDate || !newStartTime || !newEndTime) {
       return res.status(400).json({
-        error: 'Validation Error',
-        details: error.details[0].message
+        error: 'Missing required fields',
+        details: 'courseId, newDate, newStartTime, newEndTime are required'
       });
     }
 
-    const { eventId, courseId, newDate, newStartTime, newEndTime, newRoomId, newRoomName } = value;
-    const komting_id = req.user.id;
-
-    // Check if course exists and user is the komting for this course
-    const courseResult = await pool.query(
-      'SELECT id, name, komting_id FROM courses WHERE id = $1 AND is_active = true',
-      [courseId]
-    );
-
-    if (courseResult.rows.length === 0) {
-      return res.status(404).json({
-        error: 'Course not found',
-        details: 'Course does not exist or is inactive'
-      });
-    }
-
-    const course = courseResult.rows[0];
-
-    // Check if user is the komting for this course
-    if (course.komting_id !== komting_id) {
-      return res.status(403).json({
-        error: 'Access denied',
-        details: 'You are not the komting for this course'
-      });
-    }
-
-    // Find the specific schedule event to update
-    let targetEvent;
-    if (eventId) {
-      // Update specific event
-      const eventResult = await pool.query(
-        'SELECT * FROM schedule_events WHERE id = $1 AND course_id = $2',
-        [eventId, courseId]
-      );
-      
-      if (eventResult.rows.length === 0) {
-        return res.status(404).json({
-          error: 'Schedule event not found',
-          details: 'The specific schedule event does not exist'
-        });
-      }
-      
-      targetEvent = eventResult.rows[0];
-    } else {
-      // Find the next event for this course (from today onwards)
-      const eventResult = await pool.query(
-        `SELECT * FROM schedule_events 
-         WHERE course_id = $1 AND event_date >= CURRENT_DATE 
-         ORDER BY event_date ASC LIMIT 1`,
+    // Calculate academic week if not provided
+    const academicWeek = weekNumber || Math.ceil((new Date(newDate) - new Date('2024-08-26')) / (7 * 24 * 60 * 60 * 1000));
+    
+    // Get next meeting number if not provided
+    let finalMeetingNumber = meetingNumber;
+    if (!finalMeetingNumber) {
+      const meetingResult = await pool.query(
+        'SELECT COALESCE(MAX(meeting_number), 0) + 1 as next_meeting FROM schedule_events WHERE course_id = $1 AND status NOT IN (\'cancelled\', \'replaced\')',
         [courseId]
       );
-      
-      if (eventResult.rows.length === 0) {
-        return res.status(404).json({
-          error: 'No upcoming events found',
-          details: 'No upcoming schedule events found for this course'
-        });
-      }
-      
-      targetEvent = eventResult.rows[0];
+      finalMeetingNumber = meetingResult.rows[0].next_meeting;
+    }
+    
+    // Validate meeting number (1-16 per course)
+    if (finalMeetingNumber < 1 || finalMeetingNumber > 16) {
+      return res.status(400).json({
+        error: 'Invalid meeting number',
+        details: 'Meeting number must be between 1 and 16'
+      });
     }
 
-    // Find available room or use specified room
-    let finalRoomId = newRoomId;
-    if (!finalRoomId) {
-      // Auto-assign available room
-      const availableRoomResult = await pool.query(
-        `SELECT r.id FROM rooms r
-         WHERE r.id NOT IN (
-           SELECT se.room_id FROM schedule_events se
-           WHERE se.event_date = $1 AND se.status != 'cancelled'
-           AND (
-             (se.start_time <= $2 AND se.end_time > $2) OR
-             (se.start_time < $3 AND se.end_time >= $3) OR
-             (se.start_time >= $2 AND se.end_time <= $3)
-           )
-         )
-         LIMIT 1`,
-        [newDate, newStartTime, newEndTime]
+    // Use database transaction for consistency
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Check room availability if room is specified
+      if (newRoomId) {
+        const conflictResult = await client.query(
+          `SELECT se.id, c.name as course_name FROM schedule_events se
+           JOIN courses c ON se.course_id = c.id
+           WHERE se.room_id = $1 AND se.event_date = $2 AND se.status NOT IN ('cancelled', 'replaced')
+           AND se.start_time < $4 AND se.end_time > $3 AND se.course_id != $5`,
+          [newRoomId, newDate, newStartTime, newEndTime, courseId]
+        );
+
+        if (conflictResult.rows.length > 0) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({
+            error: 'Room conflict',
+            details: `Room is already booked by ${conflictResult.rows[0].course_name}`,
+            conflicting_course: conflictResult.rows[0].course_name
+          });
+        }
+      }
+
+      // Mark existing event for this week as replaced
+      await client.query(
+        `UPDATE schedule_events SET status = 'replaced' 
+         WHERE course_id = $1 AND academic_week = $2 AND status NOT IN ('cancelled', 'replaced')`,
+        [courseId, academicWeek]
       );
-      
-      if (availableRoomResult.rows.length > 0) {
-        finalRoomId = availableRoomResult.rows[0].id;
-      } else {
-        return res.status(400).json({
-          error: 'No available rooms',
-          details: 'No rooms available for the selected time slot'
-        });
-      }
+
+      // Create new schedule event
+      const result = await client.query(
+        `INSERT INTO schedule_events 
+         (course_id, room_id, event_date, start_time, end_time, status, changed_by, academic_week, meeting_number)
+         VALUES ($1, $2, $3, $4, $5, 'update', $6, $7, $8)
+         RETURNING *`,
+        [courseId, newRoomId || null, newDate, newStartTime, newEndTime, req.user.id, academicWeek, finalMeetingNumber]
+      );
+
+      await client.query('COMMIT');
+
+      res.json({
+        message: `Schedule updated for week ${academicWeek}, meeting ${finalMeetingNumber}`,
+        event: result.rows[0],
+        week_number: academicWeek,
+        meeting_number: finalMeetingNumber
+      });
+
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
-
-    // Mark the old event as replaced
-    await pool.query(
-      'UPDATE schedule_events SET status = \'replaced\' WHERE id = $1',
-      [targetEvent.id]
-    );
-
-    // Create new schedule event
-    const newEventResult = await pool.query(
-      `INSERT INTO schedule_events 
-       (course_id, room_id, event_date, start_time, end_time, status, changed_by, previous_event_id)
-       VALUES ($1, $2, $3, $4, $5, 'scheduled', $6, $7)
-       RETURNING *`,
-      [courseId, finalRoomId, newDate, newStartTime, newEndTime, komting_id, targetEvent.id]
-    );
-
-    const newEvent = newEventResult.rows[0];
-
-    // Get room details for response
-    const roomResult = await pool.query('SELECT name FROM rooms WHERE id = $1', [finalRoomId]);
-    const roomName = roomResult.rows[0]?.name || 'Unknown';
-
-    res.json({
-      message: 'Schedule updated successfully',
-      newEvent: {
-        id: newEvent.id,
-        course_id: courseId,
-        event_date: newEvent.event_date,
-        start_time: newEvent.start_time,
-        end_time: newEvent.end_time,
-        room_name: roomName
-      }
-    });
 
   } catch (error) {
     console.error('Update schedule error:', error);
@@ -359,17 +305,12 @@ router.post('/update', authenticateToken, async (req, res) => {
 });
 
 // Get schedule history for a course (komting only)
-router.get('/history/:course_id', authenticateToken, async (req, res) => {
+router.get('/history/:course_id', 
+  authenticate,
+  requireAdminOrKomting,
+  async (req, res) => {
   try {
     const { course_id } = req.params;
-
-    // Only komting can view schedule history
-    if (req.user.role !== 'komting') {
-      return res.status(403).json({
-        error: 'Access denied',
-        details: 'Only komting can view schedule history'
-      });
-    }
 
     // Check if course exists and user is the komting for this course
     const courseResult = await pool.query(
@@ -386,8 +327,8 @@ router.get('/history/:course_id', authenticateToken, async (req, res) => {
 
     const course = courseResult.rows[0];
 
-    // Check if user is the komting for this course
-    if (course.komting_id !== req.user.id) {
+    // Check if user is the komting for this course (unless admin)
+    if (req.user.role !== 'admin' && course.komting_id !== req.user.id) {
       return res.status(403).json({
         error: 'Access denied',
         details: 'You are not the komting for this course'
