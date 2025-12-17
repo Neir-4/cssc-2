@@ -1,31 +1,40 @@
-import { useState, useEffect } from 'react';
-import { FaCalendarAlt, FaClock, FaMapMarkerAlt } from 'react-icons/fa';
-import apiService from '../services/api';
+import { useState, useEffect } from "react";
+import { FaCalendarAlt, FaClock, FaMapMarkerAlt } from "react-icons/fa";
+import apiService from "../services/api";
 
-const DirectRescheduleForm = ({ 
-  selectedEvent, 
-  onConfirm, 
+const DirectRescheduleForm = ({
+  selectedEvent,
+  onConfirm,
   onCancel,
-  rescheduleLoading 
+  rescheduleLoading,
 }) => {
   const [formData, setFormData] = useState({
-    date: '',
-    startTime: '08:00',
-    endTime: '10:30',
-    roomId: ''
+    date: "",
+    startTime: "08:00",
+    endTime: "10:30",
+    roomId: "",
   });
   const [availableRooms, setAvailableRooms] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
+
+  // Local formatted today (YYYY-MM-DD)
+  const todayLocal = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
+      2,
+      "0"
+    )}-${String(d.getDate()).padStart(2, "0")}`;
+  })();
 
   // Initialize form with current event data
   useEffect(() => {
     if (selectedEvent) {
       setFormData({
-        date: selectedEvent.event_date || new Date().toISOString().split('T')[0],
-        startTime: selectedEvent.start_time || '08:00',
-        endTime: selectedEvent.end_time || '10:30',
-        roomId: selectedEvent.room_id || ''
+        date: selectedEvent.event_date || todayLocal,
+        startTime: selectedEvent.start_time || "08:00",
+        endTime: selectedEvent.end_time || "10:30",
+        roomId: selectedEvent.room_id || "",
       });
     }
   }, [selectedEvent]);
@@ -40,24 +49,28 @@ const DirectRescheduleForm = ({
   const fetchAvailableRooms = async () => {
     try {
       setLoading(true);
-      setError('');
-      
+      setError("");
+
       const response = await apiService.getAvailableRooms(
         formData.date,
         formData.startTime,
         formData.endTime
       );
-      
+
       setAvailableRooms(response.available_rooms || []);
-      
+
       // Reset room selection if current room is not available
-      if (formData.roomId && !response.available_rooms?.find(r => r.id === parseInt(formData.roomId))) {
-        setFormData(prev => ({ ...prev, roomId: '' }));
+      if (
+        formData.roomId &&
+        !response.available_rooms?.find(
+          (r) => r.id === parseInt(formData.roomId)
+        )
+      ) {
+        setFormData((prev) => ({ ...prev, roomId: "" }));
       }
-      
     } catch (err) {
-      console.error('Error fetching available rooms:', err);
-      setError('Gagal memuat data ruangan tersedia');
+      console.error("Error fetching available rooms:", err);
+      setError("Gagal memuat data ruangan tersedia");
       setAvailableRooms([]);
     } finally {
       setLoading(false);
@@ -66,17 +79,17 @@ const DirectRescheduleForm = ({
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({
+    setFormData((prev) => ({
       ...prev,
-      [name]: value
+      [name]: value,
     }));
   };
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    
+
     if (!formData.date || !formData.startTime || !formData.endTime) {
-      setError('Mohon isi semua field yang diperlukan');
+      setError("Mohon isi semua field yang diperlukan");
       return;
     }
 
@@ -84,22 +97,24 @@ const DirectRescheduleForm = ({
     const selectedDate = new Date(formData.date);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    
+
     if (selectedDate < today) {
-      setError('Tanggal tidak boleh di masa lalu');
+      setError("Tanggal tidak boleh di masa lalu");
       return;
     }
 
     // Validate time range
     if (formData.startTime >= formData.endTime) {
-      setError('Waktu mulai harus lebih awal dari waktu selesai');
+      setError("Waktu mulai harus lebih awal dari waktu selesai");
       return;
     }
 
-    // Calculate week number
-    const eventDate = new Date(formData.date);
-    const semesterStart = new Date('2024-08-26');
-    const weekNumber = Math.ceil((eventDate - semesterStart) / (7 * 24 * 60 * 60 * 1000));
+    // Calculate week number using local date parsing for YYYY-MM-DD
+    const eventDate = parseLocalDate(formData.date);
+    const semesterStart = parseLocalDate("2024-08-26");
+    const weekNumber = Math.ceil(
+      (eventDate - semesterStart) / (7 * 24 * 60 * 60 * 1000)
+    );
 
     onConfirm({
       courseId: selectedEvent.course_id,
@@ -108,7 +123,7 @@ const DirectRescheduleForm = ({
       newEndTime: formData.endTime,
       newRoomId: formData.roomId || null,
       weekNumber: weekNumber,
-      meetingNumber: selectedEvent.meeting_number || null
+      meetingNumber: selectedEvent.meeting_number || null,
     });
   };
 
@@ -117,7 +132,9 @@ const DirectRescheduleForm = ({
     const options = [];
     for (let hour = 7; hour <= 23; hour++) {
       for (let minute = 0; minute < 60; minute += 30) {
-        const timeStr = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+        const timeStr = `${hour.toString().padStart(2, "0")}:${minute
+          .toString()
+          .padStart(2, "0")}`;
         options.push(timeStr);
       }
     }
@@ -125,6 +142,27 @@ const DirectRescheduleForm = ({
   };
 
   const timeOptions = generateTimeOptions();
+
+  // Helper to parse YYYY-MM-DD as a local Date (returns Date or null)
+  const parseLocalDate = (dateStr) => {
+    if (!dateStr) return null;
+    if (typeof dateStr === "string") {
+      const [y, m, d] = dateStr.split("-").map(Number);
+      return new Date(y, m - 1, d);
+    }
+    if (dateStr instanceof Date) {
+      return new Date(
+        dateStr.getFullYear(),
+        dateStr.getMonth(),
+        dateStr.getDate()
+      );
+    }
+    // Fallback
+    const parsed = new Date(dateStr);
+    return isNaN(parsed.getTime())
+      ? null
+      : new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+  };
 
   return (
     <div className="bg-white p-6 rounded-lg">
@@ -145,7 +183,6 @@ const DirectRescheduleForm = ({
             name="date"
             value={formData.date}
             onChange={handleInputChange}
-
             className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             required
           />
@@ -165,12 +202,14 @@ const DirectRescheduleForm = ({
               className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               required
             >
-              {timeOptions.map(time => (
-                <option key={time} value={time}>{time}</option>
+              {timeOptions.map((time) => (
+                <option key={time} value={time}>
+                  {time}
+                </option>
               ))}
             </select>
           </div>
-          
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               <FaClock className="inline mr-1" />
@@ -183,8 +222,10 @@ const DirectRescheduleForm = ({
               className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               required
             >
-              {timeOptions.map(time => (
-                <option key={time} value={time}>{time}</option>
+              {timeOptions.map((time) => (
+                <option key={time} value={time}>
+                  {time}
+                </option>
               ))}
             </select>
           </div>
@@ -196,7 +237,7 @@ const DirectRescheduleForm = ({
             <FaMapMarkerAlt className="inline mr-1" />
             Ruangan
           </label>
-          
+
           {loading ? (
             <div className="p-2 text-center text-gray-500">
               Memuat ruangan tersedia...
@@ -209,19 +250,24 @@ const DirectRescheduleForm = ({
               className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             >
               <option value="">Pilih ruangan tersedia...</option>
-              {availableRooms.map(room => (
+              {availableRooms.map((room) => (
                 <option key={room.id} value={room.id}>
                   {room.name} - {room.building} (Kapasitas: {room.capacity})
                 </option>
               ))}
             </select>
           )}
-          
-          {availableRooms.length === 0 && !loading && formData.date && formData.startTime && formData.endTime && (
-            <p className="text-sm text-red-600 mt-1">
-              Tidak ada ruangan tersedia untuk waktu ini. Silakan pilih waktu lain.
-            </p>
-          )}
+
+          {availableRooms.length === 0 &&
+            !loading &&
+            formData.date &&
+            formData.startTime &&
+            formData.endTime && (
+              <p className="text-sm text-red-600 mt-1">
+                Tidak ada ruangan tersedia untuk waktu ini. Silakan pilih waktu
+                lain.
+              </p>
+            )}
         </div>
 
         {/* Summary */}
@@ -229,19 +275,30 @@ const DirectRescheduleForm = ({
           <div className="bg-blue-50 rounded-lg p-4">
             <h5 className="font-medium mb-2">Ringkasan Perubahan:</h5>
             <div className="space-y-1 text-sm">
-              <p><strong>Mata Kuliah:</strong> {selectedEvent?.course_name}</p>
-              <p><strong>Tanggal:</strong> {new Date(formData.date).toLocaleDateString('id-ID', { 
-                weekday: 'long', 
-                day: 'numeric', 
-                month: 'long', 
-                year: 'numeric' 
-              })}</p>
-              <p><strong>Waktu:</strong> {formData.startTime} - {formData.endTime}</p>
-              <p><strong>Ruangan:</strong> {
-                formData.roomId 
-                  ? availableRooms.find(r => r.id === parseInt(formData.roomId))?.name || 'Loading...'
-                  : 'Belum dipilih'
-              }</p>
+              <p>
+                <strong>Mata Kuliah:</strong> {selectedEvent?.course_name}
+              </p>
+              <p>
+                <strong>Tanggal:</strong>{" "}
+                {parseLocalDate(formData.date)?.toLocaleDateString("id-ID", {
+                  weekday: "long",
+                  day: "numeric",
+                  month: "long",
+                  year: "numeric",
+                })}
+              </p>
+              <p>
+                <strong>Waktu:</strong> {formData.startTime} -{" "}
+                {formData.endTime}
+              </p>
+              <p>
+                <strong>Ruangan:</strong>{" "}
+                {formData.roomId
+                  ? availableRooms.find(
+                      (r) => r.id === parseInt(formData.roomId)
+                    )?.name || "Loading..."
+                  : "Belum dipilih"}
+              </p>
             </div>
           </div>
         )}
@@ -261,13 +318,17 @@ const DirectRescheduleForm = ({
           >
             Kembali
           </button>
-          
+
           <button
             type="submit"
-            disabled={rescheduleLoading || !formData.roomId || availableRooms.length === 0}
+            disabled={
+              rescheduleLoading ||
+              !formData.roomId ||
+              availableRooms.length === 0
+            }
             className="bg-green-600 text-white px-6 py-2 rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {rescheduleLoading ? 'Menyimpan...' : 'Simpan Perubahan'}
+            {rescheduleLoading ? "Menyimpan..." : "Simpan Perubahan"}
           </button>
         </div>
       </form>

@@ -1,18 +1,18 @@
-import express from 'express';
-import pool from '../config/database.js';
-import { authenticate, requireAdminOrKomting } from '../middleware/index.js';
+import express from "express";
+import pool from "../config/database.js";
+import { authenticate, requireAdminOrKomting } from "../middleware/index.js";
 
 const router = express.Router();
 
 // Get schedule data compatible with existing frontend
-router.get('/real', authenticate, async (req, res) => {
+router.get("/real", authenticate, async (req, res) => {
   try {
     const { start_date, end_date } = req.query;
-    
+
     // Default to current week if no date range provided
     let startDate = new Date();
     let endDate = new Date();
-    
+
     if (start_date && end_date) {
       startDate = new Date(start_date);
       endDate = new Date(end_date);
@@ -60,66 +60,74 @@ router.get('/real', authenticate, async (req, res) => {
     `;
 
     const result = await pool.query(query);
-    
+
     // Transform to match existing frontend format
     const eventsByDate = {};
     const today = new Date();
-    
-    result.rows.forEach(row => {
-      // Calculate actual date for this week
+
+    result.rows.forEach((row) => {
+      // Calculate actual date for this week using local date components to avoid timezone shifts
       const monday = new Date(startDate);
       const eventDate = new Date(monday);
       eventDate.setDate(monday.getDate() + (row.day_order - 1));
-      const dateStr = eventDate.toISOString().split('T')[0];
-      
+      const dateStr = `${eventDate.getFullYear()}-${String(
+        eventDate.getMonth() + 1
+      ).padStart(2, "0")}-${String(eventDate.getDate()).padStart(2, "0")}`;
+
       if (!eventsByDate[dateStr]) {
         eventsByDate[dateStr] = [];
       }
-      
+
       eventsByDate[dateStr].push({
         id: row.id,
         course_id: row.id, // Using schedule ID as course_id for compatibility
         course_code: row.course_code,
         course_name: row.course_name,
         lecturer_name: row.lecturer_name,
-        komting_name: 'Komting', // Default value
+        komting_name: "Komting", // Default value
         room: {
           id: row.room_id,
           name: row.room_name,
           capacity: row.capacity,
-          floor: '1',
-          building: 'Gedung D'
+          floor: "1",
+          building: "Gedung D",
         },
-        time: `${row.start_time.substring(0,5)} - ${row.end_time.substring(0,5)}`,
-        start_time: row.start_time.substring(0,5),
-        end_time: row.end_time.substring(0,5),
-        status: 'scheduled',
+        time: `${row.start_time.substring(0, 5)} - ${row.end_time.substring(
+          0,
+          5
+        )}`,
+        start_time: row.start_time.substring(0, 5),
+        end_time: row.end_time.substring(0, 5),
+        status: "scheduled",
         event_date: dateStr,
         meeting_number: row.meeting_number,
-        week_sequence: row.week_sequence
+        week_sequence: row.week_sequence,
       });
     });
 
     res.json({
       events: eventsByDate,
       date_range: {
-        start_date: startDate.toISOString().split('T')[0],
-        end_date: endDate.toISOString().split('T')[0]
+        start_date: `${startDate.getFullYear()}-${String(
+          startDate.getMonth() + 1
+        ).padStart(2, "0")}-${String(startDate.getDate()).padStart(2, "0")}`,
+        end_date: `${endDate.getFullYear()}-${String(
+          endDate.getMonth() + 1
+        ).padStart(2, "0")}-${String(endDate.getDate()).padStart(2, "0")}`,
       },
-      total_events: result.rows.length
+      total_events: result.rows.length,
     });
-
   } catch (error) {
-    console.error('Get schedule error:', error);
+    console.error("Get schedule error:", error);
     res.status(500).json({
-      error: 'Failed to get schedule',
-      details: error.message
+      error: "Failed to get schedule",
+      details: error.message,
     });
   }
 });
 
 // Get default schedule (fallback)
-router.get('/default', authenticate, async (req, res) => {
+router.get("/default", authenticate, async (req, res) => {
   try {
     const query = `
       SELECT 
@@ -151,53 +159,57 @@ router.get('/default', authenticate, async (req, res) => {
     `;
 
     const result = await pool.query(query);
-    
+
     res.json({
       schedule: result.rows,
-      total: result.rows.length
+      total: result.rows.length,
     });
-
   } catch (error) {
-    console.error('Get default schedule error:', error);
+    console.error("Get default schedule error:", error);
     res.status(500).json({
-      error: 'Failed to get default schedule',
-      details: error.message
+      error: "Failed to get default schedule",
+      details: error.message,
     });
   }
 });
 
 // Update schedule (reschedule)
-router.post('/update', authenticate, requireAdminOrKomting, async (req, res) => {
-  try {
-    const { courseId, newDate, newStartTime, newEndTime, newRoomId } = req.body;
-    
-    if (!courseId || !newDate || !newStartTime || !newEndTime) {
-      return res.status(400).json({
-        error: 'Missing required fields'
+router.post(
+  "/update",
+  authenticate,
+  requireAdminOrKomting,
+  async (req, res) => {
+    try {
+      const { courseId, newDate, newStartTime, newEndTime, newRoomId } =
+        req.body;
+
+      if (!courseId || !newDate || !newStartTime || !newEndTime) {
+        return res.status(400).json({
+          error: "Missing required fields",
+        });
+      }
+
+      // For now, create a simple reschedule entry
+      // In a full implementation, you'd create a new schedule entry and mark old one as rescheduled
+
+      res.json({
+        message: "Schedule updated successfully",
+        event: {
+          id: courseId,
+          event_date: newDate,
+          start_time: newStartTime,
+          end_time: newEndTime,
+          room_id: newRoomId,
+        },
+      });
+    } catch (error) {
+      console.error("Update schedule error:", error);
+      res.status(500).json({
+        error: "Failed to update schedule",
+        details: error.message,
       });
     }
-
-    // For now, create a simple reschedule entry
-    // In a full implementation, you'd create a new schedule entry and mark old one as rescheduled
-    
-    res.json({
-      message: 'Schedule updated successfully',
-      event: {
-        id: courseId,
-        event_date: newDate,
-        start_time: newStartTime,
-        end_time: newEndTime,
-        room_id: newRoomId
-      }
-    });
-
-  } catch (error) {
-    console.error('Update schedule error:', error);
-    res.status(500).json({
-      error: 'Failed to update schedule',
-      details: error.message
-    });
   }
-});
+);
 
 export default router;

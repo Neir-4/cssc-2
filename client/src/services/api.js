@@ -184,8 +184,10 @@ class ApiService {
   async updateSchedule(scheduleData) {
     // Add week calculation if not provided
     if (scheduleData.newDate && !scheduleData.weekNumber) {
-      const eventDate = new Date(scheduleData.newDate);
-      const semesterStart = new Date("2024-08-26");
+      // Parse YYYY-MM-DD as local date to avoid timezone shifts
+      const [y, m, d] = scheduleData.newDate.split("-").map(Number);
+      const eventDate = new Date(y, m - 1, d);
+      const semesterStart = new Date(2024, 7, 26); // month is 0-indexed (August = 7)
       const weekNumber = Math.ceil(
         (eventDate - semesterStart) / (7 * 24 * 60 * 60 * 1000)
       );
