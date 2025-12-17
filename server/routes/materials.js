@@ -4,7 +4,11 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import pool from "../config/database.js";
-import { authenticate } from "../middleware/auth.js";
+import {
+  authenticate,
+  logActivity,
+  logFileOperation,
+} from "../middleware/index.js";
 import { requireKomting } from "../middleware/authorization.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -82,166 +86,176 @@ router.get("/counts", authenticate, async (req, res) => {
 });
 
 // Get all materials for a course (grouped by meeting)
-router.get("/:courseId", authenticate, async (req, res) => {
-  try {
-    const courseIdNum = parseInt(req.params.courseId);
+router.get(
+  "/:courseId",
+  authenticate,
+  logActivity("MATERIAL_READ"),
+  async (req, res) => {
+    try {
+      const courseIdNum = parseInt(req.params.courseId);
 
-    if (isNaN(courseIdNum)) {
-      return res.status(400).json({ error: "Invalid courseId" });
-    }
+      if (isNaN(courseIdNum)) {
+        return res.status(400).json({ error: "Invalid courseId" });
+      }
 
-    console.log(`\n🔍 GET /materials/:courseId - courseId=${courseIdNum}`);
+      console.log(`\n🔍 GET /materials/:courseId - courseId=${courseIdNum}`);
 
-    const result = await pool.query(
-      `
+      const result = await pool.query(
+        `
       SELECT m.*, u.name as uploader_name
       FROM materials m
       LEFT JOIN users u ON m.uploaded_by = u.id
       WHERE m.course_id = $1
       ORDER BY m.meeting_number, m.created_at DESC
     `,
-      [courseIdNum]
-    );
+        [courseIdNum]
+      );
 
-    const grouped = {};
-    const meta = {
-      total: 0,
-      per_meeting: {},
-      last_uploaded: null,
-    };
-
-    result.rows.forEach((row) => {
-      const meeting = row.meeting_number || 0;
-      if (!grouped[meeting]) grouped[meeting] = [];
-
-      const item = {
-        id: row.id,
-        title: row.title,
-        file_name: row.file_name,
-        file_path: row.file_path,
-        file_size: row.file_size,
-        file_type: row.file_type,
-        uploaded_by: row.uploader_name || "Unknown",
-        meeting_number: row.meeting_number,
-        created_at: row.created_at,
+      const grouped = {};
+      const meta = {
+        total: 0,
+        per_meeting: {},
+        last_uploaded: null,
       };
 
-      grouped[meeting].push(item);
+      result.rows.forEach((row) => {
+        const meeting = row.meeting_number || 0;
+        if (!grouped[meeting]) grouped[meeting] = [];
 
-      // Update metadata
-      meta.total += 1;
-      if (!meta.per_meeting[meeting]) {
-        meta.per_meeting[meeting] = { count: 0, last_uploaded: null };
-      }
-      meta.per_meeting[meeting].count += 1;
+        const item = {
+          id: row.id,
+          title: row.title,
+          file_name: row.file_name,
+          file_path: row.file_path,
+          file_size: row.file_size,
+          file_type: row.file_type,
+          uploaded_by: row.uploader_name || "Unknown",
+          meeting_number: row.meeting_number,
+          created_at: row.created_at,
+        };
 
-      const created = row.created_at;
-      if (
-        !meta.per_meeting[meeting].last_uploaded ||
-        new Date(created) > new Date(meta.per_meeting[meeting].last_uploaded)
-      ) {
-        meta.per_meeting[meeting].last_uploaded = created;
-      }
+        grouped[meeting].push(item);
 
-      if (
-        !meta.last_uploaded ||
-        new Date(created) > new Date(meta.last_uploaded)
-      ) {
-        meta.last_uploaded = created;
-      }
-    });
+        // Update metadata
+        meta.total += 1;
+        if (!meta.per_meeting[meeting]) {
+          meta.per_meeting[meeting] = { count: 0, last_uploaded: null };
+        }
+        meta.per_meeting[meeting].count += 1;
 
-    res.json({ materials: grouped, meta });
-  } catch (error) {
-    console.error("Get materials by course error:", error);
-    res.status(500).json({ error: "Failed to get materials by course" });
+        const created = row.created_at;
+        if (
+          !meta.per_meeting[meeting].last_uploaded ||
+          new Date(created) > new Date(meta.per_meeting[meeting].last_uploaded)
+        ) {
+          meta.per_meeting[meeting].last_uploaded = created;
+        }
+
+        if (
+          !meta.last_uploaded ||
+          new Date(created) > new Date(meta.last_uploaded)
+        ) {
+          meta.last_uploaded = created;
+        }
+      });
+
+      res.json({ materials: grouped, meta });
+    } catch (error) {
+      console.error("Get materials by course error:", error);
+      res.status(500).json({ error: "Failed to get materials by course" });
+    }
   }
-});
+);
 
 // Get materials for a course meeting
-router.get("/:courseId/:meeting", authenticate, async (req, res) => {
-  try {
-    const { courseId, meeting } = req.params;
+router.get(
+  "/:courseId/:meeting",
+  authenticate,
+  logActivity("MATERIAL_READ"),
+  async (req, res) => {
+    try {
+      const { courseId, meeting } = req.params;
 
-    // Convert to integers
-    const courseIdNum = parseInt(courseId);
-    const meetingNum = parseInt(meeting);
+      // Convert to integers
+      const courseIdNum = parseInt(courseId);
+      const meetingNum = parseInt(meeting);
 
-    console.log("\n🔍 GET /materials/:courseId/:meeting");
-    console.log(
-      `   Raw params: courseId="${courseId}" (${typeof courseId}), meeting="${meeting}" (${typeof meeting})`
-    );
-    console.log(
-      `   Parsed: courseIdNum=${courseIdNum}, meetingNum=${meetingNum}`
-    );
-    console.log(`   Valid: ${!isNaN(courseIdNum) && !isNaN(meetingNum)}`);
+      console.log("\n🔍 GET /materials/:courseId/:meeting");
+      console.log(
+        `   Raw params: courseId="${courseId}" (${typeof courseId}), meeting="${meeting}" (${typeof meeting})`
+      );
+      console.log(
+        `   Parsed: courseIdNum=${courseIdNum}, meetingNum=${meetingNum}`
+      );
+      console.log(`   Valid: ${!isNaN(courseIdNum) && !isNaN(meetingNum)}`);
 
-    if (isNaN(courseIdNum) || isNaN(meetingNum)) {
-      console.warn("   ❌ Invalid params - returning 400");
-      return res
-        .status(400)
-        .json({ error: "Invalid courseId or meeting format" });
-    }
+      if (isNaN(courseIdNum) || isNaN(meetingNum)) {
+        console.warn("   ❌ Invalid params - returning 400");
+        return res
+          .status(400)
+          .json({ error: "Invalid courseId or meeting format" });
+      }
 
-    console.log(
-      `   📊 Querying: SELECT * FROM materials WHERE course_id=${courseIdNum} AND meeting_number=${meetingNum}`
-    );
-    const result = await pool.query(
-      `
+      console.log(
+        `   📊 Querying: SELECT * FROM materials WHERE course_id=${courseIdNum} AND meeting_number=${meetingNum}`
+      );
+      const result = await pool.query(
+        `
       SELECT m.*, u.name as uploader_name
       FROM materials m
       LEFT JOIN users u ON m.uploaded_by = u.id
       WHERE m.course_id = $1 AND m.meeting_number = $2
       ORDER BY m.created_at DESC
     `,
-      [courseIdNum, meetingNum]
-    );
+        [courseIdNum, meetingNum]
+      );
 
-    console.log(`   ✅ Query executed: found ${result.rows.length} rows`);
+      console.log(`   ✅ Query executed: found ${result.rows.length} rows`);
 
-    if (result.rows.length > 0) {
-      console.log("   Materials found:");
-      result.rows.forEach((row, idx) => {
-        console.log(
-          `     ${idx + 1}. ID=${row.id}, title="${row.title}", uploader="${
-            row.uploader_name
-          }"`
+      if (result.rows.length > 0) {
+        console.log("   Materials found:");
+        result.rows.forEach((row, idx) => {
+          console.log(
+            `     ${idx + 1}. ID=${row.id}, title="${row.title}", uploader="${
+              row.uploader_name
+            }"`
+          );
+        });
+      } else {
+        console.log("   ⚠️  No materials in result set");
+        // Debug: Check all materials in DB
+        const allCheck = await pool.query(
+          "SELECT DISTINCT course_id, meeting_number FROM materials ORDER BY course_id, meeting_number"
         );
-      });
-    } else {
-      console.log("   ⚠️  No materials in result set");
-      // Debug: Check all materials in DB
-      const allCheck = await pool.query(
-        "SELECT DISTINCT course_id, meeting_number FROM materials ORDER BY course_id, meeting_number"
-      );
+        console.log(
+          `   All course/meeting in DB: ${JSON.stringify(allCheck.rows)}`
+        );
+      }
+
+      const materials = result.rows.map((material) => ({
+        id: material.id,
+        title: material.title,
+        file_name: material.file_name,
+        file_path: material.file_path,
+        file_size: material.file_size,
+        file_type: material.file_type,
+        uploaded_by: material.uploader_name || "Unknown",
+        created_at: material.created_at,
+        updated_at: material.updated_at,
+      }));
+
       console.log(
-        `   All course/meeting in DB: ${JSON.stringify(allCheck.rows)}`
+        `   📤 Sending response: { materials: [${materials.length} items] }`
       );
+      res.json({ materials });
+      console.log("   ✅ Response sent");
+    } catch (error) {
+      console.error("❌ Get materials error:", error.message);
+      console.error("   Stack:", error.stack);
+      res.status(500).json({ error: "Failed to get materials" });
     }
-
-    const materials = result.rows.map((material) => ({
-      id: material.id,
-      title: material.title,
-      file_name: material.file_name,
-      file_path: material.file_path,
-      file_size: material.file_size,
-      file_type: material.file_type,
-      uploaded_by: material.uploader_name || "Unknown",
-      created_at: material.created_at,
-      updated_at: material.updated_at,
-    }));
-
-    console.log(
-      `   📤 Sending response: { materials: [${materials.length} items] }`
-    );
-    res.json({ materials });
-    console.log("   ✅ Response sent");
-  } catch (error) {
-    console.error("❌ Get materials error:", error.message);
-    console.error("   Stack:", error.stack);
-    res.status(500).json({ error: "Failed to get materials" });
   }
-});
+);
 
 // Upload material (Komting only)
 router.post(
@@ -249,6 +263,7 @@ router.post(
   authenticate,
   requireKomting,
   upload.single("material"),
+  logFileOperation("upload"),
   async (req, res) => {
     try {
       if (!req.file) {
@@ -336,6 +351,7 @@ router.post(
 router.get(
   "/:courseId/:meeting/download/:fileId",
   authenticate,
+  logActivity("MATERIAL_DOWNLOAD"),
   async (req, res) => {
     try {
       const { fileId } = req.params;
@@ -376,6 +392,7 @@ router.delete(
   "/:courseId/:meeting/:fileId",
   authenticate,
   requireKomting,
+  logActivity("MATERIAL_DELETE"),
   async (req, res) => {
     try {
       const { fileId } = req.params;

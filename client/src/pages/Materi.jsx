@@ -107,7 +107,7 @@ const Materi = () => {
             <input
               type="text"
               className="block w-full pl-10 pr-4 py-3 border border-gray-200 rounded-full leading-5 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent shadow-sm transition-all"
-              placeholder="Cari mata kuliah atau nama dosen..."
+              placeholder="Cari mata kuliah atau nama pengampu..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />

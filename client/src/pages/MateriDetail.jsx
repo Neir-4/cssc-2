@@ -1,11 +1,13 @@
 import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { useAlert } from "../context/AlertContext";
 import apiService from "../services/api";
 
 const MateriDetail = () => {
   const { id: courseId } = useParams();
   const { user } = useAuth();
+  const { showAlert } = useAlert();
   const [courseData, setCourseData] = useState(null);
   const [materials, setMaterials] = useState({});
   const [materialsMeta, setMaterialsMeta] = useState(null);
@@ -97,10 +99,13 @@ const MateriDetail = () => {
 
       setUploadingMeeting(null);
       setShowUpload((prev) => ({ ...prev, [meetingNumber]: false }));
-      alert("Upload berhasil!");
+      showAlert({ type: "success", message: "Upload berhasil!" });
     } catch (err) {
       console.error("Upload error:", err);
-      alert("Gagal upload file: " + (err.message || "Unknown error"));
+      showAlert({
+        type: "error",
+        message: "Gagal upload file: " + (err.message || "Unknown error"),
+      });
       setUploadingMeeting(null);
     }
   };
@@ -124,10 +129,10 @@ const MateriDetail = () => {
         materialId
       );
 
-      alert("File dihapus!");
+      showAlert({ type: "success", message: "File dihapus!" });
     } catch (err) {
       console.error("Delete error:", err);
-      alert("Gagal hapus file");
+      showAlert({ type: "error", message: "Gagal hapus file" });
       // On failure, reload materials to sync state
       await loadMaterials(courseData.course_id);
     }
@@ -151,7 +156,7 @@ const MateriDetail = () => {
       window.URL.revokeObjectURL(url);
     } catch (err) {
       console.error("Download error:", err);
-      alert("Gagal mendownload file");
+      showAlert({ type: "error", message: "Gagal mendownload file" });
     }
   };
 
@@ -251,7 +256,7 @@ const MateriDetail = () => {
                   d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
                 />
               </svg>
-              <span className="mr-2">Dosen Pengampu:</span>
+              <span className="mr-2">Pengampu:</span>
               <span className="font-medium mr-4">
                 {courseData?.lecturer_name || "Belum ditentukan"}
               </span>

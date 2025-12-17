@@ -8,12 +8,14 @@ import {
   FiDownload,
 } from "react-icons/fi";
 import { useAuth } from "../context/AuthContext";
+import { useAlert } from "../context/AlertContext";
 import apiService from "../services/api";
 
 const MateriPertemuan = () => {
   const { id, pertemuan } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { showAlert } = useAlert();
 
   console.log("Current user:", user); // Debug
 
@@ -129,15 +131,20 @@ const MateriPertemuan = () => {
 
     // Validate courseId exists
     if (!courseId) {
-      alert(
-        "Kesalahan: Course ID tidak ditemukan. Silakan muat ulang halaman."
-      );
+      showAlert({
+        type: "error",
+        message:
+          "Kesalahan: Course ID tidak ditemukan. Silakan muat ulang halaman.",
+      });
       console.error("Cannot upload: courseId is null or undefined");
       return;
     }
 
     if (!selectedMeeting) {
-      alert("Kesalahan: Pilih pertemuan terlebih dahulu.");
+      showAlert({
+        type: "error",
+        message: "Kesalahan: Pilih pertemuan terlebih dahulu.",
+      });
       return;
     }
 
@@ -174,10 +181,13 @@ const MateriPertemuan = () => {
       // Refresh materials dengan values saat ini
       await loadMaterials(courseId, selectedMeeting);
       console.log("✅ Materials reloaded after upload");
-      alert("File berhasil diupload!");
+      showAlert({ type: "success", message: "File berhasil diupload!" });
     } catch (error) {
       console.error("❌ Error uploading material:", error);
-      alert("Gagal upload materi: " + error.message);
+      showAlert({
+        type: "error",
+        message: "Gagal upload materi: " + error.message,
+      });
     } finally {
       setLoading(false);
     }
@@ -200,7 +210,10 @@ const MateriPertemuan = () => {
       setDeleteConfirm(null);
     } catch (error) {
       console.error("Error deleting material:", error);
-      alert("Gagal hapus materi: " + error.message);
+      showAlert({
+        type: "error",
+        message: "Gagal hapus materi: " + error.message,
+      });
     } finally {
       setLoading(false);
     }
@@ -223,7 +236,7 @@ const MateriPertemuan = () => {
       document.body.removeChild(a);
     } catch (error) {
       console.error("Error downloading material:", error);
-      alert("Gagal download materi");
+      showAlert({ type: "error", message: "Gagal download materi" });
     }
   };
 

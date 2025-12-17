@@ -327,11 +327,13 @@ router.get("/my/subscriptions", authenticateToken, async (req, res) => {
       result = await pool.query(
         `
       SELECT c.id as course_id, c.course_code, c.course_name as name, c.credits,
-             c.semester, l.id as lecturer_id, l.name as lecturer_name
+             c.semester,
+             COALESCE(l.name, (SELECT cs2.lecturer_name FROM class_schedules cs2 WHERE cs2.course_id = c.id LIMIT 1)) as lecturer_name
       FROM course_subscriptions cs
       JOIN courses c ON cs.course_id = c.id
       LEFT JOIN users l ON c.lecturer_id = l.id
       WHERE cs.user_id = $1
+      GROUP BY c.id, c.course_code, c.course_name, c.credits, c.semester, l.name
       ORDER BY c.course_code
     `,
         [user_id]
