@@ -37,15 +37,29 @@ const MateriPertemuan = () => {
         const subsResponse = await apiService.getMySubscriptions();
         const subscriptions = subsResponse.subscriptions || [];
 
+        console.log("🔍 Available courses from subscriptions:");
+        subscriptions.forEach((sub) => {
+          const slug = sub.name?.toLowerCase().replace(/\s+/g, "-");
+          console.log(`  - ${sub.name} (id: ${sub.course_id}) → slug: ${slug}`);
+        });
+
+        console.log(`\n🔍 Looking for course with URL id: "${id}"`);
+
         const course = subscriptions.find(
           (sub) => sub.name?.toLowerCase().replace(/\s+/g, "-") === id
         );
 
         if (course) {
           setCourseId(course.course_id);
-          console.log("Course ID loaded:", course.course_id);
+          console.log(
+            `✅ Course found! ID: ${course.course_id}, Name: ${course.name}`
+          );
         } else {
-          console.warn("Course not found in subscriptions");
+          console.warn(`❌ Course not found for id: "${id}"`);
+          console.warn(
+            "Available slugs:",
+            subscriptions.map((s) => s.name?.toLowerCase().replace(/\s+/g, "-"))
+          );
         }
       } catch (error) {
         console.error("Error loading course ID:", error);
@@ -71,18 +85,40 @@ const MateriPertemuan = () => {
     }
   }, [selectedMeeting, courseId]);
 
-  const loadMaterials = async () => {
+  const loadMaterials = async (cId = courseId, meeting = selectedMeeting) => {
     try {
       setLoading(true);
-      console.log("Loading materials for:", {
-        courseId: courseId,
-        meeting: selectedMeeting,
-      });
-      const response = await apiService.getMaterials(courseId, selectedMeeting);
-      console.log("Materials loaded:", response.materials);
-      setMaterials(response.materials || []);
+
+      console.log("📥 Loading materials...");
+      console.log(`   Course ID: ${cId} (type: ${typeof cId})`);
+      console.log(`   Meeting: ${meeting} (type: ${typeof meeting})`);
+
+      if (!cId || !meeting) {
+        console.warn("⚠️ Missing params, skipping load");
+        setMaterials([]);
+        return;
+      }
+
+      const response = await apiService.getMaterials(cId, meeting);
+      console.log("📦 API Response:", response);
+      console.log(`   Response type: ${typeof response}`);
+      console.log(`   Has materials field: ${!!response?.materials}`);
+      console.log(`   Materials count: ${response.materials?.length || 0}`);
+
+      if (response.materials && response.materials.length > 0) {
+        console.log("✅ Materials loaded successfully:");
+        response.materials.forEach((m, i) => {
+          console.log(`   ${i + 1}. ${m.title} (${m.file_size} bytes)`);
+        });
+        setMaterials(response.materials);
+      } else {
+        console.warn("⚠️ No materials found or empty response");
+        console.log("   Full response:", JSON.stringify(response));
+        setMaterials([]);
+      }
     } catch (error) {
-      console.error("Error loading materials:", error);
+      console.error("❌ Error loading materials:", error);
+      setMaterials([]);
     } finally {
       setLoading(false);
     }
@@ -107,11 +143,14 @@ const MateriPertemuan = () => {
 
     try {
       setLoading(true);
-      console.log("Uploading material:", {
-        courseId: courseId,
-        meeting: selectedMeeting,
-        filename: uploadFile.name,
-      });
+      console.log("\n📤 UPLOADING MATERIAL:");
+      console.log(`   courseId: ${courseId} (${typeof courseId})`);
+      console.log(
+        `   selectedMeeting: ${selectedMeeting} (${typeof selectedMeeting})`
+      );
+      console.log(`   file: ${uploadFile.name}`);
+      console.log(`   title: ${editTitle || uploadFile.name}`);
+
       const formData = new FormData();
       formData.append("material", uploadFile);
       formData.append("title", editTitle || uploadFile.name);
@@ -121,15 +160,23 @@ const MateriPertemuan = () => {
         selectedMeeting,
         formData
       );
-      console.log("Upload response:", uploadResponse);
+      console.log("✅ Upload successful, response:", uploadResponse);
+
       setUploadFile(null);
       setEditTitle("");
-      console.log("Calling loadMaterials after upload...");
-      await loadMaterials();
-      console.log("Materials reloaded after upload");
+
+      console.log("\n📥 RELOADING MATERIALS AFTER UPLOAD:");
+      console.log(`   courseId: ${courseId} (${typeof courseId})`);
+      console.log(
+        `   selectedMeeting: ${selectedMeeting} (${typeof selectedMeeting})`
+      );
+
+      // Refresh materials dengan values saat ini
+      await loadMaterials(courseId, selectedMeeting);
+      console.log("✅ Materials reloaded after upload");
       alert("File berhasil diupload!");
     } catch (error) {
-      console.error("Error uploading material:", error);
+      console.error("❌ Error uploading material:", error);
       alert("Gagal upload materi: " + error.message);
     } finally {
       setLoading(false);

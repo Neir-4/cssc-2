@@ -1,30 +1,31 @@
 // API Service for CSSC Backend
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_BASE_URL =
+  import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 class ApiService {
   constructor() {
     this.baseURL = API_BASE_URL;
-    this.token = localStorage.getItem('cssc-token');
+    this.token = localStorage.getItem("cssc-token");
   }
 
   // Set authentication token
   setToken(token) {
     this.token = token;
     if (token) {
-      localStorage.setItem('cssc-token', token);
+      localStorage.setItem("cssc-token", token);
     } else {
-      localStorage.removeItem('cssc-token');
+      localStorage.removeItem("cssc-token");
     }
   }
 
   // Get headers with authentication
   getHeaders() {
     const headers = {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
     };
 
     if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`;
+      headers["Authorization"] = `Bearer ${this.token}`;
     }
 
     return headers;
@@ -38,43 +39,43 @@ class ApiService {
       ...options,
     };
 
-    console.log('🔄 API Request:', {
+    console.log("🔄 API Request:", {
       url,
-      method: config.method || 'GET',
+      method: config.method || "GET",
       headers: config.headers,
-      body: config.body ? JSON.parse(config.body) : null
+      body: config.body ? JSON.parse(config.body) : null,
     });
 
     try {
       const response = await fetch(url, config);
-      
-      console.log('📡 API Response:', {
+
+      console.log("📡 API Response:", {
         status: response.status,
         statusText: response.statusText,
-        url: response.url
+        url: response.url,
       });
 
       const data = await response.json();
-      
-      console.log('📦 Response Data:', data);
+
+      console.log("📦 Response Data:", data);
 
       if (!response.ok) {
-        console.error('❌ API Error Response:', {
+        console.error("❌ API Error Response:", {
           status: response.status,
           error: data.error,
           details: data.details,
-          data
+          data,
         });
-        throw new Error(data.error || data.details || 'Request failed');
+        throw new Error(data.error || data.details || "Request failed");
       }
 
       return data;
     } catch (error) {
-      console.error('💥 API Request Error:', {
+      console.error("💥 API Request Error:", {
         message: error.message,
         url,
         endpoint,
-        error
+        error,
       });
       throw error;
     }
@@ -82,13 +83,13 @@ class ApiService {
 
   // GET request
   async get(endpoint) {
-    return this.request(endpoint, { method: 'GET' });
+    return this.request(endpoint, { method: "GET" });
   }
 
   // POST request
   async post(endpoint, data) {
     return this.request(endpoint, {
-      method: 'POST',
+      method: "POST",
       body: JSON.stringify(data),
     });
   }
@@ -96,7 +97,7 @@ class ApiService {
   // PUT request
   async put(endpoint, data) {
     return this.request(endpoint, {
-      method: 'PUT',
+      method: "PUT",
       body: JSON.stringify(data),
     });
   }
@@ -104,14 +105,14 @@ class ApiService {
   // DELETE request
   async delete(endpoint, data) {
     return this.request(endpoint, {
-      method: 'DELETE',
+      method: "DELETE",
       body: JSON.stringify(data),
     });
   }
 
   // Authentication methods
   async login(email, password) {
-    const response = await this.post('/auth/login', { email, password });
+    const response = await this.post("/auth/login", { email, password });
     if (response.token) {
       this.setToken(response.token);
     }
@@ -119,7 +120,7 @@ class ApiService {
   }
 
   async register(userData) {
-    const response = await this.post('/auth/register', userData);
+    const response = await this.post("/auth/register", userData);
     if (response.token) {
       this.setToken(response.token);
     }
@@ -127,17 +128,17 @@ class ApiService {
   }
 
   async getCurrentUser() {
-    return this.get('/auth/me');
+    return this.get("/auth/me");
   }
 
   async updateProfile(userData) {
-    return this.put('/auth/profile', userData);
+    return this.put("/auth/profile", userData);
   }
 
   // Course methods
   async getCourses(params = {}) {
     const queryString = new URLSearchParams(params).toString();
-    const endpoint = queryString ? `/courses?${queryString}` : '/courses';
+    const endpoint = queryString ? `/courses?${queryString}` : "/courses";
     return this.get(endpoint);
   }
 
@@ -150,31 +151,33 @@ class ApiService {
   }
 
   async subscribeCourse(courseId) {
-    return this.post('/courses/subscribe', { course_id: courseId });
+    return this.post("/courses/subscribe", { course_id: courseId });
   }
 
   async unsubscribeCourse(courseId) {
-    return this.delete('/courses/unsubscribe', { course_id: courseId });
+    return this.delete("/courses/unsubscribe", { course_id: courseId });
   }
 
   async getMySubscriptions() {
-    return this.get('/courses/my/subscriptions');
+    return this.get("/courses/my/subscriptions");
   }
 
   async createCourse(courseData) {
-    return this.post('/courses', courseData);
+    return this.post("/courses", courseData);
   }
 
   // Schedule methods
   async getDefaultSchedule() {
-    return this.get('/schedule/default');
+    return this.get("/schedule/default");
   }
 
   async getRealSchedule(params = {}) {
     // Add cache-busting timestamp
     params._t = Date.now();
     const queryString = new URLSearchParams(params).toString();
-    const endpoint = queryString ? `/schedule/real?${queryString}` : '/schedule/real';
+    const endpoint = queryString
+      ? `/schedule/real?${queryString}`
+      : "/schedule/real";
     return this.get(endpoint);
   }
 
@@ -182,12 +185,14 @@ class ApiService {
     // Add week calculation if not provided
     if (scheduleData.newDate && !scheduleData.weekNumber) {
       const eventDate = new Date(scheduleData.newDate);
-      const semesterStart = new Date('2024-08-26');
-      const weekNumber = Math.ceil((eventDate - semesterStart) / (7 * 24 * 60 * 60 * 1000));
+      const semesterStart = new Date("2024-08-26");
+      const weekNumber = Math.ceil(
+        (eventDate - semesterStart) / (7 * 24 * 60 * 60 * 1000)
+      );
       scheduleData.weekNumber = weekNumber;
     }
-    
-    return this.post('/schedule/update', scheduleData);
+
+    return this.post("/schedule/update", scheduleData);
   }
 
   async getScheduleHistory(courseId) {
@@ -197,7 +202,7 @@ class ApiService {
   // Room methods
   async getRooms(params = {}) {
     const queryString = new URLSearchParams(params).toString();
-    const endpoint = queryString ? `/rooms?${queryString}` : '/rooms';
+    const endpoint = queryString ? `/rooms?${queryString}` : "/rooms";
     return this.get(endpoint);
   }
 
@@ -215,11 +220,11 @@ class ApiService {
       start_time: startTime,
       end_time: endTime,
     });
-    
+
     if (minCapacity) {
-      params.append('min_capacity', minCapacity);
+      params.append("min_capacity", minCapacity);
     }
-    
+
     return this.get(`/rooms/available?${params.toString()}`);
   }
 
@@ -228,51 +233,51 @@ class ApiService {
   }
 
   async createRoom(roomData) {
-    return this.post('/rooms', roomData);
+    return this.post("/rooms", roomData);
   }
 
   // Notification methods
   async getNotificationPreferences() {
-    return this.get('/notifications/preferences');
+    return this.get("/notifications/preferences");
   }
 
   async updateNotificationPreferences(preferences) {
-    return this.put('/notifications/preferences', preferences);
+    return this.put("/notifications/preferences", preferences);
   }
 
   async sendScheduleChangeNotification(notificationData) {
-    return this.post('/notifications/schedule-change', notificationData);
+    return this.post("/notifications/schedule-change", notificationData);
   }
 
   async testNotification(type, recipient) {
-    return this.post('/notifications/test', { type, recipient });
+    return this.post("/notifications/test", { type, recipient });
   }
 
   // Schedule methods
   async getMySchedules() {
-    return this.get('/courses/schedules/my');
+    return this.get("/courses/schedules/my");
   }
 
   async getAllSchedules() {
-    return this.get('/courses/schedules/all');
+    return this.get("/courses/schedules/all");
   }
 
   // Announcements methods
   async getMyAnnouncements() {
-    return this.get('/announcements/my');
+    return this.get("/announcements/my");
   }
 
   async getAllAnnouncements() {
-    return this.get('/announcements/all');
+    return this.get("/announcements/all");
   }
 
   async createAnnouncement(data) {
-    return this.post('/announcements', data);
+    return this.post("/announcements", data);
   }
 
   // Get all rooms
   async getRooms() {
-    return this.request('/rooms');
+    return this.request("/rooms");
   }
 
   // Find available rooms for rescheduling
@@ -286,24 +291,34 @@ class ApiService {
     return this.get(`/materials/${courseId}/${meeting}`);
   }
 
+  // Get all materials for a course (grouped by meeting)
+  async getMaterialsForCourse(courseId) {
+    return this.get(`/materials/${courseId}`);
+  }
+
+  // Aggregated material counts per course
+  async getMaterialsCounts() {
+    return this.get("/materials/counts");
+  }
+
   async uploadMaterial(courseId, meeting, formData) {
     const url = `${this.baseURL}/materials/${courseId}/${meeting}/upload`;
     const headers = {};
     if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`;
+      headers["Authorization"] = `Bearer ${this.token}`;
     }
-    
+
     const response = await fetch(url, {
-      method: 'POST',
+      method: "POST",
       headers,
-      body: formData
+      body: formData,
     });
-    
+
     if (!response.ok) {
       const error = await response.json();
-      throw new Error(error.error || 'Upload failed');
+      throw new Error(error.error || "Upload failed");
     }
-    
+
     return response.json();
   }
 
@@ -311,30 +326,30 @@ class ApiService {
     const url = `${this.baseURL}/materials/${courseId}/${meeting}/download/${fileId}`;
     const headers = {};
     if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`;
+      headers["Authorization"] = `Bearer ${this.token}`;
     }
-    
+
     const response = await fetch(url, {
-      method: 'GET',
-      headers
+      method: "GET",
+      headers,
     });
-    
+
     if (!response.ok) {
-      throw new Error('Download failed');
+      throw new Error("Download failed");
     }
-    
+
     return response.blob();
   }
 
   async deleteMaterial(courseId, meeting, fileId) {
     return this.request(`/materials/${courseId}/${meeting}/${fileId}`, {
-      method: 'DELETE'
+      method: "DELETE",
     });
   }
 
   // Health check
   async healthCheck() {
-    return this.get('/health');
+    return this.get("/health");
   }
 }
 

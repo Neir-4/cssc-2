@@ -57,6 +57,107 @@ const upload = multer({
   },
 });
 
+// Aggregated material counts per course
+router.get("/counts", authenticate, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT course_id, COUNT(*) as total, MAX(created_at) as last_uploaded
+      FROM materials
+      GROUP BY course_id
+    `);
+
+    const counts = {};
+    result.rows.forEach((r) => {
+      counts[r.course_id] = {
+        total: parseInt(r.total, 10),
+        last_uploaded: r.last_uploaded,
+      };
+    });
+
+    res.json({ counts });
+  } catch (err) {
+    console.error("Get material counts error:", err);
+    res.status(500).json({ error: "Failed to get material counts" });
+  }
+});
+
+// Get all materials for a course (grouped by meeting)
+router.get("/:courseId", authenticate, async (req, res) => {
+  try {
+    const courseIdNum = parseInt(req.params.courseId);
+
+    if (isNaN(courseIdNum)) {
+      return res.status(400).json({ error: "Invalid courseId" });
+    }
+
+    console.log(`\n🔍 GET /materials/:courseId - courseId=${courseIdNum}`);
+
+    const result = await pool.query(
+      `
+      SELECT m.*, u.name as uploader_name
+      FROM materials m
+      LEFT JOIN users u ON m.uploaded_by = u.id
+      WHERE m.course_id = $1
+      ORDER BY m.meeting_number, m.created_at DESC
+    `,
+      [courseIdNum]
+    );
+
+    const grouped = {};
+    const meta = {
+      total: 0,
+      per_meeting: {},
+      last_uploaded: null,
+    };
+
+    result.rows.forEach((row) => {
+      const meeting = row.meeting_number || 0;
+      if (!grouped[meeting]) grouped[meeting] = [];
+
+      const item = {
+        id: row.id,
+        title: row.title,
+        file_name: row.file_name,
+        file_path: row.file_path,
+        file_size: row.file_size,
+        file_type: row.file_type,
+        uploaded_by: row.uploader_name || "Unknown",
+        meeting_number: row.meeting_number,
+        created_at: row.created_at,
+      };
+
+      grouped[meeting].push(item);
+
+      // Update metadata
+      meta.total += 1;
+      if (!meta.per_meeting[meeting]) {
+        meta.per_meeting[meeting] = { count: 0, last_uploaded: null };
+      }
+      meta.per_meeting[meeting].count += 1;
+
+      const created = row.created_at;
+      if (
+        !meta.per_meeting[meeting].last_uploaded ||
+        new Date(created) > new Date(meta.per_meeting[meeting].last_uploaded)
+      ) {
+        meta.per_meeting[meeting].last_uploaded = created;
+      }
+
+      if (
+        !meta.last_uploaded ||
+        new Date(created) > new Date(meta.last_uploaded)
+      ) {
+        meta.last_uploaded = created;
+      }
+    });
+
+    res.json({ materials: grouped, meta });
+  } catch (error) {
+    console.error("Get materials by course error:", error);
+    res.status(500).json({ error: "Failed to get materials by course" });
+  }
+});
+
 // Get materials for a course meeting
 router.get("/:courseId/:meeting", authenticate, async (req, res) => {
   try {
@@ -66,17 +167,25 @@ router.get("/:courseId/:meeting", authenticate, async (req, res) => {
     const courseIdNum = parseInt(courseId);
     const meetingNum = parseInt(meeting);
 
-    console.log("Getting materials for:", {
-      courseId: courseIdNum,
-      meeting: meetingNum,
-    });
+    console.log("\n🔍 GET /materials/:courseId/:meeting");
+    console.log(
+      `   Raw params: courseId="${courseId}" (${typeof courseId}), meeting="${meeting}" (${typeof meeting})`
+    );
+    console.log(
+      `   Parsed: courseIdNum=${courseIdNum}, meetingNum=${meetingNum}`
+    );
+    console.log(`   Valid: ${!isNaN(courseIdNum) && !isNaN(meetingNum)}`);
 
     if (isNaN(courseIdNum) || isNaN(meetingNum)) {
+      console.warn("   ❌ Invalid params - returning 400");
       return res
         .status(400)
         .json({ error: "Invalid courseId or meeting format" });
     }
 
+    console.log(
+      `   📊 Querying: SELECT * FROM materials WHERE course_id=${courseIdNum} AND meeting_number=${meetingNum}`
+    );
     const result = await pool.query(
       `
       SELECT m.*, u.name as uploader_name
@@ -88,7 +197,27 @@ router.get("/:courseId/:meeting", authenticate, async (req, res) => {
       [courseIdNum, meetingNum]
     );
 
-    console.log("Materials found:", result.rows.length);
+    console.log(`   ✅ Query executed: found ${result.rows.length} rows`);
+
+    if (result.rows.length > 0) {
+      console.log("   Materials found:");
+      result.rows.forEach((row, idx) => {
+        console.log(
+          `     ${idx + 1}. ID=${row.id}, title="${row.title}", uploader="${
+            row.uploader_name
+          }"`
+        );
+      });
+    } else {
+      console.log("   ⚠️  No materials in result set");
+      // Debug: Check all materials in DB
+      const allCheck = await pool.query(
+        "SELECT DISTINCT course_id, meeting_number FROM materials ORDER BY course_id, meeting_number"
+      );
+      console.log(
+        `   All course/meeting in DB: ${JSON.stringify(allCheck.rows)}`
+      );
+    }
 
     const materials = result.rows.map((material) => ({
       id: material.id,
@@ -102,9 +231,14 @@ router.get("/:courseId/:meeting", authenticate, async (req, res) => {
       updated_at: material.updated_at,
     }));
 
+    console.log(
+      `   📤 Sending response: { materials: [${materials.length} items] }`
+    );
     res.json({ materials });
+    console.log("   ✅ Response sent");
   } catch (error) {
-    console.error("Get materials error:", error);
+    console.error("❌ Get materials error:", error.message);
+    console.error("   Stack:", error.stack);
     res.status(500).json({ error: "Failed to get materials" });
   }
 });
@@ -182,7 +316,12 @@ router.post(
           id: material.id,
           title: material.title,
           file_name: material.file_name,
+          file_path: material.file_path,
           file_size: material.file_size,
+          file_type: material.file_type,
+          meeting_number: meetingNum,
+          uploaded_by: userId,
+          uploaded_by_name: req.user?.name || null,
           created_at: material.created_at,
         },
       });
@@ -275,5 +414,29 @@ router.delete(
     }
   }
 );
+
+// Aggregated material counts per course
+router.get("/counts", authenticate, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT course_id, COUNT(*) as total, MAX(created_at) as last_uploaded
+      FROM materials
+      GROUP BY course_id
+    `);
+
+    const counts = {};
+    result.rows.forEach((r) => {
+      counts[r.course_id] = {
+        total: parseInt(r.total, 10),
+        last_uploaded: r.last_uploaded,
+      };
+    });
+
+    res.json({ counts });
+  } catch (err) {
+    console.error("Get material counts error:", err);
+    res.status(500).json({ error: "Failed to get material counts" });
+  }
+});
 
 export default router;

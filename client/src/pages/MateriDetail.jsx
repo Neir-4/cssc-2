@@ -8,6 +8,7 @@ const MateriDetail = () => {
   const { user } = useAuth();
   const [courseData, setCourseData] = useState(null);
   const [materials, setMaterials] = useState({});
+  const [materialsMeta, setMaterialsMeta] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [uploadingMeeting, setUploadingMeeting] = useState(null);
@@ -51,10 +52,19 @@ const MateriDetail = () => {
 
   const loadMaterials = async (courseId) => {
     try {
-      // For now, return empty materials since API doesn't exist yet
-      setMaterials({});
+      const res = await apiService.getMaterialsForCourse(courseId);
+      const grouped = res.materials || {};
+      const meta = res.meta || null;
+      const map = {};
+      Object.keys(grouped).forEach((k) => {
+        map[parseInt(k, 10)] = grouped[k];
+      });
+      setMaterials(map);
+      setMaterialsMeta(meta);
     } catch (err) {
       console.error("Error loading materials:", err);
+      setMaterials({});
+      setMaterialsMeta(null);
     }
   };
 
@@ -72,8 +82,18 @@ const MateriDetail = () => {
         formData
       );
 
-      // Reload materials after successful upload
-      await loadMaterials(courseData.course_id);
+      // Append returned material to state to avoid full refetch
+      const newMaterial = response?.material;
+      if (newMaterial) {
+        setMaterials((prev) => {
+          const copy = { ...prev };
+          copy[meetingNumber] = [newMaterial, ...(copy[meetingNumber] || [])];
+          return copy;
+        });
+      } else {
+        // Fallback: reload all materials
+        await loadMaterials(courseData.course_id);
+      }
 
       setUploadingMeeting(null);
       setShowUpload((prev) => ({ ...prev, [meetingNumber]: false }));
@@ -85,16 +105,53 @@ const MateriDetail = () => {
     }
   };
 
-  const handleDeleteMaterial = async (materialId) => {
+  const handleDeleteMaterial = async (meetingNumber, materialId) => {
     if (!confirm("Hapus file ini?")) return;
 
     try {
-      // TODO: Implement delete API
-      console.log("Deleting material:", materialId);
-      alert("File dihapus! (Demo)");
+      // Optimistic UI update
+      setMaterials((prev) => {
+        const copy = { ...prev };
+        copy[meetingNumber] = (copy[meetingNumber] || []).filter(
+          (m) => m.id !== materialId
+        );
+        return copy;
+      });
+
+      await apiService.deleteMaterial(
+        courseData.course_id,
+        meetingNumber,
+        materialId
+      );
+
+      alert("File dihapus!");
     } catch (err) {
       console.error("Delete error:", err);
       alert("Gagal hapus file");
+      // On failure, reload materials to sync state
+      await loadMaterials(courseData.course_id);
+    }
+  };
+
+  const handleDownload = async (meetingNumber, material) => {
+    try {
+      const blob = await apiService.downloadMaterial(
+        courseData.course_id,
+        meetingNumber,
+        material.id
+      );
+
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = material.title || material.file_name || "material";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Download error:", err);
+      alert("Gagal mendownload file");
     }
   };
 
@@ -179,22 +236,43 @@ const MateriDetail = () => {
             {courseData?.name}
           </h1>
 
-          <div className="flex items-center text-gray-600 text-sm">
-            <svg
-              className="w-4 h-4 mr-2"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-              />
-            </svg>
-            Dosen Pengampu • {courseData?.credits || 3} SKS • Semester{" "}
-            {courseData?.semester || "Ganjil"}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:gap-4 text-gray-600 text-sm">
+            <div className="flex items-center">
+              <svg
+                className="w-4 h-4 mr-2"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+                />
+              </svg>
+              <span className="mr-2">Dosen Pengampu:</span>
+              <span className="font-medium mr-4">
+                {courseData?.lecturer_name || "Belum ditentukan"}
+              </span>
+              <span>
+                • {courseData?.credits || 3} SKS • Semester{" "}
+                {courseData?.semester || "Ganjil"}
+              </span>
+            </div>
+
+            <div className="text-sm text-gray-500 mt-2 sm:mt-0">
+              {materialsMeta?.total ? (
+                <>
+                  {materialsMeta.total} file • Terakhir diupload:{" "}
+                  {materialsMeta.last_uploaded
+                    ? new Date(materialsMeta.last_uploaded).toLocaleString()
+                    : "—"}
+                </>
+              ) : (
+                "Belum ada materi"
+              )}
+            </div>
           </div>
         </div>
 
@@ -280,7 +358,7 @@ const MateriDetail = () => {
                       key={material.id}
                       className="flex items-center p-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors group"
                     >
-                      <div className="flex-shrink-0 mr-3">
+                      <div className="shrink-0 mr-3">
                         <div className="w-8 h-8 bg-blue-100 rounded flex items-center justify-center">
                           <svg
                             className="w-4 h-4 text-blue-600"
@@ -308,6 +386,7 @@ const MateriDetail = () => {
 
                       <div className="flex items-center gap-2">
                         <button
+                          onClick={() => handleDownload(meeting.id, material)}
                           className="p-1 text-gray-400 hover:text-blue-600"
                           title="Download"
                         >
@@ -327,7 +406,9 @@ const MateriDetail = () => {
                         </button>
                         {user?.role === "komting" && (
                           <button
-                            onClick={() => handleDeleteMaterial(material.id)}
+                            onClick={() =>
+                              handleDeleteMaterial(meeting.id, material.id)
+                            }
                             className="p-1 text-gray-400 hover:text-red-600"
                             title="Hapus"
                           >
