@@ -4,7 +4,8 @@ import { authenticate, requireKomting, validate, logActivity } from '../middlewa
 
 const router = express.Router();
 
-
+const DEBUG_LOGS = process.env.DEBUG_LOGS === 'true';
+const ALLOW_EXPENSIVE_ROOM_SEARCH = process.env.ALLOW_EXPENSIVE_ROOM_SEARCH === 'true';
 
 // Get all rooms
 router.get('/', async (req, res) => {
@@ -56,9 +57,10 @@ router.get('/available', async (req, res) => {
       });
     }
 
-    console.log('🔍 Checking room availability:', { date, start_time, end_time });
+    if (DEBUG_LOGS) {
+      console.log('🔍 Checking room availability:', { date, start_time, end_time });
+    }
 
-    // Get all rooms first
     const allRoomsQuery = `
       SELECT c.id, c.room_number as name, c.capacity, c.facilities as description,
              b.building_name as building
@@ -67,53 +69,58 @@ router.get('/available', async (req, res) => {
       WHERE ($1::integer IS NULL OR c.capacity >= $1::integer)
       ORDER BY c.room_number
     `;
-    
+
     const allRooms = await pool.query(allRoomsQuery, [min_capacity || null]);
-    
-    // Check each room individually for conflicts
+
+    const conflictsQuery = `
+      SELECT cs.room_id, co.course_name, cs.start_time, cs.end_time
+      FROM class_schedules cs
+      JOIN courses co ON cs.course_id = co.id
+      WHERE cs.room_id IS NOT NULL
+      AND cs.day_of_week = EXTRACT(DOW FROM $1::date)
+      AND cs.start_time < $3::time
+      AND cs.end_time > $2::time
+
+      UNION ALL
+
+      SELECT se.room_id, co.course_name, se.start_time, se.end_time
+      FROM schedule_events se
+      JOIN courses co ON se.course_id = co.id
+      WHERE se.room_id IS NOT NULL
+      AND se.event_date = $1::date
+      AND se.status NOT IN ('cancelled', 'replaced')
+      AND se.start_time < $3::time
+      AND se.end_time > $2::time
+    `;
+
+    const conflictsResult = await pool.query(conflictsQuery, [date, start_time, end_time]);
+    const conflictByRoomId = new Map();
+    for (const row of conflictsResult.rows) {
+      if (!conflictByRoomId.has(row.room_id)) conflictByRoomId.set(row.room_id, row);
+    }
+
     const availableRooms = [];
     const occupiedRooms = [];
-    
+
     for (const room of allRooms.rows) {
-      // Check if this specific room has conflicts
-      const conflictQuery = `
-        SELECT cs.id, c.course_name, cs.start_time, cs.end_time
-        FROM class_schedules cs
-        JOIN courses c ON cs.course_id = c.id
-        WHERE cs.room_id = $1
-        AND cs.day_of_week = EXTRACT(DOW FROM $2::date)
-        AND cs.start_time < $4::time 
-        AND cs.end_time > $3::time
-        
-        UNION ALL
-        
-        SELECT se.id, c.course_name, se.start_time, se.end_time
-        FROM schedule_events se
-        JOIN courses c ON se.course_id = c.id
-        WHERE se.room_id = $1
-        AND se.event_date = $2::date
-        AND se.status NOT IN ('cancelled', 'replaced')
-        AND se.start_time < $4::time 
-        AND se.end_time > $3::time
-      `;
-      
-      const conflicts = await pool.query(conflictQuery, [room.id, date, start_time, end_time]);
-      
-      if (conflicts.rows.length === 0) {
+      const conflict = conflictByRoomId.get(room.id);
+      if (!conflict) {
         availableRooms.push({
           ...room,
-          is_available: true
+          is_available: true,
         });
       } else {
         occupiedRooms.push({
           ...room,
           is_available: false,
-          conflict_reason: `Occupied by ${conflicts.rows[0].course_name} (${conflicts.rows[0].start_time}-${conflicts.rows[0].end_time})`
+          conflict_reason: `Occupied by ${conflict.course_name} (${conflict.start_time}-${conflict.end_time})`,
         });
       }
     }
 
-    console.log(`📊 Room availability: ${availableRooms.length} available, ${occupiedRooms.length} occupied`);
+    if (DEBUG_LOGS) {
+      console.log(`📊 Room availability: ${availableRooms.length} available, ${occupiedRooms.length} occupied`);
+    }
 
     res.json({
       date,
@@ -252,8 +259,6 @@ router.get('/status', async (req, res) => {
   }
 });
 
-
-
 // Get room schedule for a specific date
 // Get daily schedule with room availability
 router.get('/daily-schedule', authenticate, async (req, res) => {
@@ -267,6 +272,15 @@ router.get('/daily-schedule', authenticate, async (req, res) => {
       });
     }
 
+    if (!ALLOW_EXPENSIVE_ROOM_SEARCH) {
+      return res.status(400).json({
+        error: 'Endpoint disabled on serverless',
+        details: 'daily-schedule is expensive. Set ALLOW_EXPENSIVE_ROOM_SEARCH=true to enable.',
+      });
+    }
+
+    const maxSlots = parseInt(process.env.MAX_DAILY_SLOTS, 10) || 10;
+
     // Get all time slots for the day (7:00 - 18:00)
     const timeSlots = [];
     for (let hour = 7; hour <= 17; hour++) {
@@ -278,8 +292,10 @@ router.get('/daily-schedule', authenticate, async (req, res) => {
         
         if (endHour <= 18) {
           timeSlots.push({ start_time: startTime, end_time: endTime });
+          if (timeSlots.length >= maxSlots) break;
         }
       }
+      if (timeSlots.length >= maxSlots) break;
     }
 
     // For each time slot, get available rooms
@@ -326,7 +342,9 @@ router.get('/daily-schedule', authenticate, async (req, res) => {
 
 // Find available rooms for rescheduling
 router.get('/available-for-reschedule', authenticate, async (req, res) => {
-    console.log('Available for reschedule request:', req.query);
+    if (DEBUG_LOGS) {
+      console.log('Available for reschedule request:', req.query);
+    }
     try {
         const { 
             original_date, 
@@ -375,7 +393,9 @@ router.get('/available-for-reschedule', authenticate, async (req, res) => {
                 LEFT JOIN buildings b ON c.building_id = b.id
                 ORDER BY b.building_name, c.room_number
             `);
-            console.log(`Found ${roomsResult.rows.length} active rooms`);
+            if (DEBUG_LOGS) {
+              console.log(`Found ${roomsResult.rows.length} active rooms`);
+            }
             
             if (!roomsResult.rows.length) {
                 return res.status(404).json({
@@ -393,8 +413,25 @@ router.get('/available-for-reschedule', authenticate, async (req, res) => {
 
         const availableSlots = [];
 
+        const fromDateObj = new Date(from_date);
+        const toDateObj = new Date(to_date);
+        const maxDays = parseInt(process.env.MAX_RESCHEDULE_DAYS, 10) || 14;
+        const maxRooms = parseInt(process.env.MAX_RESCHEDULE_ROOMS, 10) || 30;
+        const rangeDays = Math.ceil((toDateObj - fromDateObj) / (24 * 60 * 60 * 1000)) + 1;
+
+        if (!ALLOW_EXPENSIVE_ROOM_SEARCH && rangeDays > maxDays) {
+          return res.status(400).json({
+            error: 'Range too large',
+            details: `Date range too large for serverless. Max ${maxDays} days. Set ALLOW_EXPENSIVE_ROOM_SEARCH=true to override.`,
+          });
+        }
+
         // Check each room
-        for (const room of roomsResult.rows) {
+        const roomsToCheck = !ALLOW_EXPENSIVE_ROOM_SEARCH
+          ? roomsResult.rows.slice(0, maxRooms)
+          : roomsResult.rows;
+
+        for (const room of roomsToCheck) {
             // Get all scheduled events for this room in the date range
             let eventsResult;
             try {
@@ -409,7 +446,9 @@ router.get('/available-for-reschedule', authenticate, async (req, res) => {
                     WHERE cs.room_id = $1
                     ORDER BY cs.day_of_week, cs.start_time
                 `, [room.id]);
-                console.log(`Found ${eventsResult.rows.length} scheduled events for room ${room.id}`);
+                if (DEBUG_LOGS) {
+                  console.log(`Found ${eventsResult.rows.length} scheduled events for room ${room.id}`);
+                }
             } catch (eventError) {
                 console.error(`Error fetching events for room ${room.id}:`, eventError);
                 // Continue to next room if there's an error with this one

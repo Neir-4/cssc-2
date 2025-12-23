@@ -16,6 +16,8 @@ const __dirname = path.dirname(__filename);
 
 const router = express.Router();
 
+const DEBUG_LOGS = process.env.DEBUG_LOGS === "true";
+
 // File upload configuration
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -98,7 +100,9 @@ router.get(
         return res.status(400).json({ error: "Invalid courseId" });
       }
 
-      console.log(`\n🔍 GET /materials/:courseId - courseId=${courseIdNum}`);
+      if (DEBUG_LOGS) {
+        console.log(`\n🔍 GET /materials/:courseId - courseId=${courseIdNum}`);
+      }
 
       const result = await pool.query(
         `
@@ -180,25 +184,31 @@ router.get(
       const courseIdNum = parseInt(courseId);
       const meetingNum = parseInt(meeting);
 
-      console.log("\n🔍 GET /materials/:courseId/:meeting");
-      console.log(
-        `   Raw params: courseId="${courseId}" (${typeof courseId}), meeting="${meeting}" (${typeof meeting})`
-      );
-      console.log(
-        `   Parsed: courseIdNum=${courseIdNum}, meetingNum=${meetingNum}`
-      );
-      console.log(`   Valid: ${!isNaN(courseIdNum) && !isNaN(meetingNum)}`);
+      if (DEBUG_LOGS) {
+        console.log("\n🔍 GET /materials/:courseId/:meeting");
+        console.log(
+          `   Raw params: courseId="${courseId}" (${typeof courseId}), meeting="${meeting}" (${typeof meeting})`
+        );
+        console.log(
+          `   Parsed: courseIdNum=${courseIdNum}, meetingNum=${meetingNum}`
+        );
+        console.log(`   Valid: ${!isNaN(courseIdNum) && !isNaN(meetingNum)}`);
+      }
 
       if (isNaN(courseIdNum) || isNaN(meetingNum)) {
-        console.warn("   ❌ Invalid params - returning 400");
+        if (DEBUG_LOGS) {
+          console.warn("   ❌ Invalid params - returning 400");
+        }
         return res
           .status(400)
           .json({ error: "Invalid courseId or meeting format" });
       }
 
-      console.log(
-        `   📊 Querying: SELECT * FROM materials WHERE course_id=${courseIdNum} AND meeting_number=${meetingNum}`
-      );
+      if (DEBUG_LOGS) {
+        console.log(
+          `   📊 Querying: SELECT * FROM materials WHERE course_id=${courseIdNum} AND meeting_number=${meetingNum}`
+        );
+      }
       const result = await pool.query(
         `
       SELECT m.*, u.name as uploader_name
@@ -210,26 +220,31 @@ router.get(
         [courseIdNum, meetingNum]
       );
 
-      console.log(`   ✅ Query executed: found ${result.rows.length} rows`);
+      if (DEBUG_LOGS) {
+        console.log(`   ✅ Query executed: found ${result.rows.length} rows`);
+      }
 
       if (result.rows.length > 0) {
-        console.log("   Materials found:");
-        result.rows.forEach((row, idx) => {
-          console.log(
-            `     ${idx + 1}. ID=${row.id}, title="${row.title}", uploader="${
-              row.uploader_name
-            }"`
-          );
-        });
+        if (DEBUG_LOGS) {
+          console.log("   Materials found:");
+          result.rows.forEach((row, idx) => {
+            console.log(
+              `     ${idx + 1}. ID=${row.id}, title="${row.title}", uploader="${
+                row.uploader_name
+              }"`
+            );
+          });
+        }
       } else {
-        console.log("   ⚠️  No materials in result set");
-        // Debug: Check all materials in DB
-        const allCheck = await pool.query(
-          "SELECT DISTINCT course_id, meeting_number FROM materials ORDER BY course_id, meeting_number"
-        );
-        console.log(
-          `   All course/meeting in DB: ${JSON.stringify(allCheck.rows)}`
-        );
+        if (DEBUG_LOGS) {
+          console.log("   ⚠️  No materials in result set");
+          const allCheck = await pool.query(
+            "SELECT DISTINCT course_id, meeting_number FROM materials ORDER BY course_id, meeting_number"
+          );
+          console.log(
+            `   All course/meeting in DB: ${JSON.stringify(allCheck.rows)}`
+          );
+        }
       }
 
       const materials = result.rows.map((material) => ({
@@ -244,11 +259,15 @@ router.get(
         updated_at: material.updated_at,
       }));
 
-      console.log(
-        `   📤 Sending response: { materials: [${materials.length} items] }`
-      );
+      if (DEBUG_LOGS) {
+        console.log(
+          `   📤 Sending response: { materials: [${materials.length} items] }`
+        );
+      }
       res.json({ materials });
-      console.log("   ✅ Response sent");
+      if (DEBUG_LOGS) {
+        console.log("   ✅ Response sent");
+      }
     } catch (error) {
       console.error("❌ Get materials error:", error.message);
       console.error("   Stack:", error.stack);
@@ -290,17 +309,19 @@ router.post(
           .json({ error: "Invalid courseId or meeting format" });
       }
 
-      console.log(
-        `[DEBUG] ${req.user?.name || req.user?.email} mencoba mengunggah file=${
-          req.file.originalname
-        } ke course=${courseIdNum} meeting=${meetingNum}`
-      );
-      console.log("Uploading file:", {
-        courseId: courseIdNum,
-        meeting: meetingNum,
-        filename: req.file.originalname,
-        userId: userId,
-      });
+      if (DEBUG_LOGS) {
+        console.log(
+          `[DEBUG] ${req.user?.name || req.user?.email} mencoba mengunggah file=${
+            req.file.originalname
+          } ke course=${courseIdNum} meeting=${meetingNum}`
+        );
+        console.log("Uploading file:", {
+          courseId: courseIdNum,
+          meeting: meetingNum,
+          filename: req.file.originalname,
+          userId: userId,
+        });
+      }
 
       // Insert material into database
       const result = await pool.query(
@@ -323,19 +344,21 @@ router.post(
 
       const material = result.rows[0];
 
-      console.log(
-        `[DEBUG] ${
-          req.user?.name || req.user?.email
-        } telah mengunggah materi id=${material.id} title=${
-          material.title
-        } course=${courseIdNum} meeting=${meetingNum}`
-      );
-      console.log("Material uploaded successfully:", {
-        id: material.id,
-        title: material.title,
-        courseId: courseIdNum,
-        meeting: meetingNum,
-      });
+      if (DEBUG_LOGS) {
+        console.log(
+          `[DEBUG] ${
+            req.user?.name || req.user?.email
+          } telah mengunggah materi id=${material.id} title=${
+            material.title
+          } course=${courseIdNum} meeting=${meetingNum}`
+        );
+        console.log("Material uploaded successfully:", {
+          id: material.id,
+          title: material.title,
+          courseId: courseIdNum,
+          meeting: meetingNum,
+        });
+      }
 
       res.status(201).json({
         message: "Material uploaded successfully",
@@ -423,11 +446,13 @@ router.delete(
 
       const material = materialResult.rows[0];
 
-      console.log(
-        `[DEBUG] ${
-          req.user?.name || req.user?.email
-        } mencoba menghapus materi id=${fileId} title=${material.title}`
-      );
+      if (DEBUG_LOGS) {
+        console.log(
+          `[DEBUG] ${
+            req.user?.name || req.user?.email
+          } mencoba menghapus materi id=${fileId} title=${material.title}`
+        );
+      }
 
       // Delete from file system
       const filePath = path.join(
@@ -442,11 +467,13 @@ router.delete(
       // Delete from database
       await pool.query("DELETE FROM materials WHERE id = $1", [fileId]);
 
-      console.log(
-        `[DEBUG] ${
-          req.user?.name || req.user?.email
-        } telah menghapus materi id=${fileId} title=${material.title}`
-      );
+      if (DEBUG_LOGS) {
+        console.log(
+          `[DEBUG] ${
+            req.user?.name || req.user?.email
+          } telah menghapus materi id=${fileId} title=${material.title}`
+        );
+      }
 
       res.json({ message: "Material deleted successfully" });
     } catch (error) {

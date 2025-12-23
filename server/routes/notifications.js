@@ -7,6 +7,8 @@ import pool from '../config/database.js';
 
 const router = express.Router();
 
+const DEBUG_LOGS = process.env.DEBUG_LOGS === 'true';
+
 // Middleware to verify JWT token
 const authenticateToken = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
@@ -37,7 +39,7 @@ const createEmailTransporter = () => {
     return null;
   }
 
-  return nodemailer.createTransporter({
+  return nodemailer.createTransport({
     host: process.env.EMAIL_HOST || 'smtp.gmail.com',
     port: parseInt(process.env.EMAIL_PORT) || 587,
     secure: false,
@@ -75,7 +77,9 @@ const sendEmailNotification = async (recipient, subject, message) => {
     };
 
     const result = await transporter.sendMail(mailOptions);
-    console.log('Email sent successfully:', result.messageId);
+    if (DEBUG_LOGS) {
+      console.log('Email sent successfully:', result.messageId);
+    }
     return { success: true, messageId: result.messageId };
   } catch (error) {
     console.error('Email sending failed:', error);
@@ -98,7 +102,9 @@ const sendWhatsAppNotification = async (recipient, message) => {
       to: `whatsapp:${recipient}`,
     });
 
-    console.log('WhatsApp message sent successfully:', result.sid);
+    if (DEBUG_LOGS) {
+      console.log('WhatsApp message sent successfully:', result.sid);
+    }
     return { success: true, messageId: result.sid };
   } catch (error) {
     console.error('WhatsApp sending failed:', error);

@@ -12,15 +12,19 @@ import {
 
 const router = express.Router();
 
+const DEBUG_LOGS = process.env.DEBUG_LOGS === "true";
+
 // Generate JWT token
 const generateToken = (user) => {
-  console.log("🎫 Generating token for user:", {
-    id: user.id,
-    email: user.email,
-    role: user.role,
-    name: user.name,
-    hasJwtSecret: !!process.env.JWT_SECRET,
-  });
+  if (DEBUG_LOGS) {
+    console.log("🎫 Generating token for user:", {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      name: user.name,
+      hasJwtSecret: !!process.env.JWT_SECRET,
+    });
+  }
 
   if (!process.env.JWT_SECRET) {
     throw new Error("JWT_SECRET environment variable is not set");
@@ -103,33 +107,41 @@ router.post(
 router.post("/login", validate(userSchemas.login), async (req, res) => {
   try {
     const { email, password } = req.body;
-    console.log("🔐 Login attempt:", { email, hasPassword: !!password });
-    console.log("✅ Input validated for email:", email);
+    if (DEBUG_LOGS) {
+      console.log("🔐 Login attempt:", { email, hasPassword: !!password });
+      console.log("✅ Input validated for email:", email);
+    }
 
     // Find user
-    console.log("🔍 Searching for user with email:", email);
+    if (DEBUG_LOGS) {
+      console.log("🔍 Searching for user with email:", email);
+    }
     const result = await pool.query(
       `SELECT id, name, email, password_hash, role, phone, created_at
        FROM users WHERE email = $1`,
       [email]
     );
 
-    console.log("📊 Database query result:", {
-      rowCount: result.rows.length,
-      foundUser:
-        result.rows.length > 0
-          ? {
-              id: result.rows[0]?.id,
-              name: result.rows[0]?.name,
-              email: result.rows[0]?.email,
-              role: result.rows[0]?.role,
-              hasPasswordHash: !!result.rows[0]?.password_hash,
-            }
-          : null,
-    });
+    if (DEBUG_LOGS) {
+      console.log("📊 Database query result:", {
+        rowCount: result.rows.length,
+        foundUser:
+          result.rows.length > 0
+            ? {
+                id: result.rows[0]?.id,
+                name: result.rows[0]?.name,
+                email: result.rows[0]?.email,
+                role: result.rows[0]?.role,
+                hasPasswordHash: !!result.rows[0]?.password_hash,
+              }
+            : null,
+      });
+    }
 
     if (result.rows.length === 0) {
-      console.log("❌ User not found for email:", email);
+      if (DEBUG_LOGS) {
+        console.log("❌ User not found for email:", email);
+      }
       return res.status(401).json({
         error: "Invalid credentials",
         details: "Email or password is incorrect",
@@ -137,20 +149,28 @@ router.post("/login", validate(userSchemas.login), async (req, res) => {
     }
 
     const user = result.rows[0];
-    console.log("👤 User found:", {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-    });
+    if (DEBUG_LOGS) {
+      console.log("👤 User found:", {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      });
+    }
 
     // Verify password
-    console.log("🔒 Verifying password...");
+    if (DEBUG_LOGS) {
+      console.log("🔒 Verifying password...");
+    }
     const isValidPassword = await bcrypt.compare(password, user.password_hash);
-    console.log("🔑 Password verification result:", isValidPassword);
+    if (DEBUG_LOGS) {
+      console.log("🔑 Password verification result:", isValidPassword);
+    }
 
     if (!isValidPassword) {
-      console.log("❌ Invalid password for user:", email);
+      if (DEBUG_LOGS) {
+        console.log("❌ Invalid password for user:", email);
+      }
       await logSecurityEvent(
         "FAILED_LOGIN",
         { email, reason: "invalid_password" },
@@ -163,9 +183,13 @@ router.post("/login", validate(userSchemas.login), async (req, res) => {
     }
 
     // Generate token
-    console.log("🎫 Generating JWT token...");
+    if (DEBUG_LOGS) {
+      console.log("🎫 Generating JWT token...");
+    }
     const token = generateToken(user);
-    console.log("✅ Token generated successfully");
+    if (DEBUG_LOGS) {
+      console.log("✅ Token generated successfully");
+    }
 
     const response = {
       message: "Login successful",
@@ -180,12 +204,14 @@ router.post("/login", validate(userSchemas.login), async (req, res) => {
       token,
     };
 
-    console.log("🎉 Login successful for user:", {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-    });
+    if (DEBUG_LOGS) {
+      console.log("🎉 Login successful for user:", {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      });
+    }
 
     res.json(response);
   } catch (error) {
@@ -233,9 +259,11 @@ router.put(
   logActivity("USER_UPDATE_PROFILE"),
   async (req, res) => {
     try {
-      console.log(
-        `[DEBUG] ${req.user?.name || req.user?.email} mencoba mengubah profil`
-      );
+      if (DEBUG_LOGS) {
+        console.log(
+          `[DEBUG] ${req.user?.name || req.user?.email} mencoba mengubah profil`
+        );
+      }
       const { name, phone, email } = req.body;
 
       // Build update query dynamically
@@ -301,9 +329,11 @@ router.put(
 
       const user = result.rows[0];
 
-      console.log(
-        `[DEBUG] ${req.user?.name || req.user?.email} telah mengubah profil`
-      );
+      if (DEBUG_LOGS) {
+        console.log(
+          `[DEBUG] ${req.user?.name || req.user?.email} telah mengubah profil`
+        );
+      }
       res.json({
         message: "Profile updated successfully",
         user: {

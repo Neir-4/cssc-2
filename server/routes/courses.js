@@ -5,6 +5,8 @@ import pool from "../config/database.js";
 
 const router = express.Router();
 
+const DEBUG_LOGS = process.env.DEBUG_LOGS === "true";
+
 // Middleware to verify JWT token
 const authenticateToken = (req, res, next) => {
   const token = req.headers.authorization?.split(" ")[1];
@@ -319,7 +321,9 @@ router.get("/my/subscriptions", authenticateToken, async (req, res) => {
       });
     }
 
-    console.log(`Fetching subscriptions for user_id=${user_id}`);
+    if (DEBUG_LOGS) {
+      console.log(`Fetching subscriptions for user_id=${user_id}`);
+    }
 
     let result;
 
