@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon --delay 2 server.js",
+    "dev": "nodemon server.js",
     "migrate": "node migrations/migrate.js",
     "seed": "node seeds/seed.js",
     "setup:phase1": "node setup/phase1-setup.js",
