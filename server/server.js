@@ -227,6 +227,12 @@ app.use("*", (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 
+// Export a serverless handler for platforms like Vercel.
+const handler = serverless(app);
+export default handler;
+
+let server;
+
 // Test database connection before starting server
 const testDatabaseConnection = async () => {
   try {
@@ -276,15 +282,10 @@ const testDatabaseConnection = async () => {
     return false;
   }
 };
-// Export a serverless handler for platforms like Vercel. This allows Vercel
-// to invoke the Express app as a function. When not running on Vercel we
-// will start a normal HTTP server and initialize Socket.IO.
-const handler = serverless(app);
-export default handler;
 
 if (!process.env.VERCEL) {
   // Running as a normal server (not serverless) - create real HTTP server
-  const server = createServer(app);
+  server = createServer(app);
   // initialize Socket.IO only in this mode
   try {
     const { Server } = await import("socket.io");
@@ -342,14 +343,18 @@ if (!process.env.VERCEL) {
 // Graceful shutdown
 process.on("SIGTERM", () => {
   console.log("SIGTERM received, shutting down gracefully");
-  server.close(() => {
-    console.log("Process terminated");
-  });
+  if (server) {
+    server.close(() => {
+      console.log("Process terminated");
+    });
+  }
 });
 
 process.on("SIGINT", () => {
   console.log("SIGINT received, shutting down gracefully");
-  server.close(() => {
-    console.log("Process terminated");
-  });
+  if (server) {
+    server.close(() => {
+      console.log("Process terminated");
+    });
+  }
 });

@@ -8,7 +8,9 @@ export const logActivity = (action, resource = null) => {
     res.send = function (data) {
       // Log after successful response
       if (res.statusCode < 400) {
-        logToDatabase(req, action, resource, res.statusCode);
+        queueMicrotask(() => {
+          void logToDatabase(req, action, resource, res.statusCode);
+        });
       }
       originalSend.call(this, data);
     };
@@ -20,6 +22,8 @@ export const logActivity = (action, resource = null) => {
 // Log sensitive operations to database
 const logToDatabase = async (req, action, resource, statusCode) => {
   try {
+    if (process.env.DISABLE_DB_LOGS === "true") return;
+
     const userId = req.user?.id || null;
     const userEmail = req.user?.email || "anonymous";
     const userRole = req.user?.role || "guest";
@@ -107,6 +111,19 @@ export const requestLogger = (req, res, next) => {
 // Security event logging
 export const logSecurityEvent = async (event, details, req = null) => {
   try {
+    if (process.env.DISABLE_DB_LOGS === "true") {
+      console.warn(`🔒 SECURITY EVENT: ${event}`, {
+        timestamp: new Date().toISOString(),
+        event,
+        details,
+        ip: req?.ip || "unknown",
+        userAgent: req?.get("User-Agent") || "unknown",
+        userId: req?.user?.id || null,
+        userEmail: req?.user?.email || null,
+      });
+      return;
+    }
+
     const logEntry = {
       timestamp: new Date().toISOString(),
       event,

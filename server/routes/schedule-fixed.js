@@ -4,12 +4,17 @@ import { authenticate, requireAdminOrKomting } from "../middleware/index.js";
 
 const router = express.Router();
 
+const DEBUG_LOGS = process.env.DEBUG_LOGS === "true";
+const RUN_SCHEMA_SYNC = process.env.RUN_SCHEMA_SYNC === "true";
+
 // Get real schedule with proper subscription filtering
 router.get("/real", authenticate, async (req, res) => {
   try {
     const user_id = req.user.id;
 
-    console.log("🔍 Schedule request:", { user_id, role: req.user.role });
+    if (DEBUG_LOGS) {
+      console.log("🔍 Schedule request:", { user_id, role: req.user.role });
+    }
 
     // Default to current week
     let startDate = new Date();
@@ -107,20 +112,22 @@ router.get("/real", authenticate, async (req, res) => {
 
     const defaultResult = await pool.query(defaultQuery, queryParams);
 
-    console.log(
-      "📊 Found rescheduled courses:",
-      rescheduledResult.rows.map((r) => `${r.course_name} on ${r.event_date}`)
-    );
-    console.log(
-      "📊 Found default courses:",
-      defaultResult.rows.map((r) => r.course_name)
-    );
-    console.log(
-      "📅 Date range being queried:",
-      startDate.toISOString().split("T")[0],
-      "to",
-      endDate.toISOString().split("T")[0]
-    );
+    if (DEBUG_LOGS) {
+      console.log(
+        "📊 Found rescheduled courses:",
+        rescheduledResult.rows.map((r) => `${r.course_name} on ${r.event_date}`)
+      );
+      console.log(
+        "📊 Found default courses:",
+        defaultResult.rows.map((r) => r.course_name)
+      );
+      console.log(
+        "📅 Date range being queried:",
+        startDate.toISOString().split("T")[0],
+        "to",
+        endDate.toISOString().split("T")[0]
+      );
+    }
 
     // Combine results, prioritizing rescheduled events
     const allEvents = [...rescheduledResult.rows];
@@ -211,16 +218,19 @@ router.get("/real", authenticate, async (req, res) => {
       (sum, events) => sum + events.length,
       0
     );
-    console.log(
-      "📊 Final unique courses by date:",
-      Object.keys(eventsByDate).map(
-        (date) =>
-          `${date}: [${eventsByDate[date]
-            .map((e) => e.course_name)
-            .join(", ")}]`
-      )
-    );
-    console.log("📦 Full events data:", JSON.stringify(eventsByDate, null, 2));
+
+    if (DEBUG_LOGS) {
+      console.log(
+        "📊 Final unique courses by date:",
+        Object.keys(eventsByDate).map(
+          (date) =>
+            `${date}: [${eventsByDate[date]
+              .map((e) => e.course_name)
+              .join(", ")}]`
+        )
+      );
+      console.log("📦 Full events data:", JSON.stringify(eventsByDate, null, 2));
+    }
 
     res.json({
       events: eventsByDate,
@@ -320,14 +330,16 @@ router.post(
         });
       }
 
-      console.log("🔄 Reschedule request:", {
-        courseId,
-        newDate,
-        newStartTime,
-        newEndTime,
-        newRoomId,
-        weekNumber,
-      });
+      if (DEBUG_LOGS) {
+        console.log("🔄 Reschedule request:", {
+          courseId,
+          newDate,
+          newStartTime,
+          newEndTime,
+          newRoomId,
+          weekNumber,
+        });
+      }
 
       // Calculate week number if not provided - use local date
       const [year, month, day] = newDate.split("-").map(Number);
@@ -343,8 +355,8 @@ router.post(
       try {
         await client.query("BEGIN");
 
-        // Create schedule_events table if it doesn't exist
-        await client.query(`
+        if (RUN_SCHEMA_SYNC) {
+          await client.query(`
         CREATE TABLE IF NOT EXISTS schedule_events (
           id SERIAL PRIMARY KEY,
           course_id INTEGER NOT NULL,
@@ -360,16 +372,15 @@ router.post(
         )
       `);
 
-        // Add missing columns if they don't exist
-        try {
-          await client.query(
-            "ALTER TABLE schedule_events ADD COLUMN IF NOT EXISTS week_number INTEGER"
-          );
-          await client.query(
-            "ALTER TABLE schedule_events ADD COLUMN IF NOT EXISTS meeting_number INTEGER"
-          );
-        } catch (e) {
-          // Columns might already exist
+          try {
+            await client.query(
+              "ALTER TABLE schedule_events ADD COLUMN IF NOT EXISTS week_number INTEGER"
+            );
+            await client.query(
+              "ALTER TABLE schedule_events ADD COLUMN IF NOT EXISTS meeting_number INTEGER"
+            );
+          } catch (e) {
+          }
         }
 
         // Check for time conflicts (regardless of room)

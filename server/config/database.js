@@ -4,13 +4,20 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const pool = new Pool({
+const isServerless = !!process.env.VERCEL;
+const poolConfig = {
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false,
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
-});
+  max: parseInt(process.env.PG_POOL_MAX, 10) || (isServerless ? 3 : 20),
+  idleTimeoutMillis: parseInt(process.env.PG_IDLE_TIMEOUT_MS, 10) || (isServerless ? 10000 : 30000),
+  connectionTimeoutMillis: parseInt(process.env.PG_CONN_TIMEOUT_MS, 10) || 5000,
+  keepAlive: true,
+};
+
+const globalKey = '__cssc_pg_pool__';
+const pool = isServerless
+  ? (globalThis[globalKey] || (globalThis[globalKey] = new Pool(poolConfig)))
+  : new Pool(poolConfig);
 
 // Test database connection
 pool.on('connect', () => {
